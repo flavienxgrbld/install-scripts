@@ -1,9 +1,21 @@
 #!/bin/bash
 set -euo pipefail
 
+# Détection de la version Debian
+if grep -q "bookworm" /etc/os-release; then
+    DEBIAN_VERSION="12"
+    DEBIAN_CODENAME="bookworm"
+elif grep -q "trixie" /etc/os-release; then
+    DEBIAN_VERSION="13"
+    DEBIAN_CODENAME="trixie"
+else
+    echo "❌ ERREUR: Ce script est prévu pour Debian 12 (bookworm) ou Debian 13 (trixie)" >&2
+    exit 1
+fi
+
 # Variables de configuration
 ZABBIX_VERSION="7.4"
-ZABBIX_DEB="zabbix-release_latest_${ZABBIX_VERSION}+debian13_all.deb"
+ZABBIX_DEB="zabbix-release_latest_${ZABBIX_VERSION}+debian${DEBIAN_VERSION}_all.deb"
 ZABBIX_URL="https://repo.zabbix.com/zabbix/${ZABBIX_VERSION}/release/debian/pool/main/z/zabbix-release/${ZABBIX_DEB}"
 ZABBIX_AGENT_CONF="/etc/zabbix/zabbix_agent2.conf"
 TMP_DIR="/tmp/zabbix_agent_install_$$"
@@ -32,7 +44,7 @@ trap cleanup EXIT
 # Vérifications préliminaires
 [ "$EUID" -eq 0 ] || error_exit "Ce script doit être exécuté en root"
 
-grep -q "trixie" /etc/os-release || error_exit "Ce script est prévu pour Debian 13 (trixie)"
+info "Détection de Debian ${DEBIAN_VERSION} (${DEBIAN_CODENAME})"
 
 info "Vérification de la connectivité HTTPS vers repo.zabbix.com"
 curl -fs https://repo.zabbix.com >/dev/null || error_exit "Accès HTTPS à repo.zabbix.com impossible"
