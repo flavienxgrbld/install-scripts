@@ -112,6 +112,8 @@ configure_param() {
 configure_param "Server" "${ZABBIX_SERVER}" "$ZABBIX_AGENT_CONF"
 configure_param "ServerActive" "${ZABBIX_SERVER_ACTIVE}" "$ZABBIX_AGENT_CONF"
 configure_param "Hostname" "${ZABBIX_HOSTNAME}" "$ZABBIX_AGENT_CONF"
+configure_param "ListenIP" "0.0.0.0" "$ZABBIX_AGENT_CONF"
+configure_param "ListenPort" "10050" "$ZABBIX_AGENT_CONF"
 
 # Configuration des permissions
 chown zabbix:zabbix "$ZABBIX_AGENT_CONF"
@@ -144,16 +146,28 @@ if systemctl is-active --quiet zabbix-agent2; then
 else
     echo "❌ Le service n'a pas démarré correctement"
     echo
-    echo "=== STATUT DU SERVICE ==="
-    systemctl status zabbix-agent2 --no-pager
+    echo "=== DIAGNOSTIC DU PROBLÈME ==="
     echo
-    echo "=== DERNIÈRES LIGNES DES LOGS ==="
-    journalctl -u zabbix-agent2 -n 20 --no-pager
+    echo "--- Test manuel du démarrage ---"
+    if /usr/sbin/zabbix_agent2 -c "$ZABBIX_AGENT_CONF" -t agent.ping 2>&1 | head -20; then
+        echo "Test agent.ping réussi"
+    else
+        echo "Échec du test agent.ping"
+    fi
     echo
-    echo "=== CONFIGURATION ACTIVE ==="
-    grep -v '^#' "$ZABBIX_AGENT_CONF" | grep -v '^$' | head -20
+    echo "--- Logs du service (dernières 30 lignes) ---"
+    journalctl -u zabbix-agent2 --no-pager --lines=30
     echo
-    error_exit "Échec du démarrage de Zabbix Agent 2 - voir les logs ci-dessus"
+    echo "--- Configuration active (sans commentaires) ---"
+    grep -E '^[^#]' "$ZABBIX_AGENT_CONF" | grep -v '^$'
+    echo
+    echo "--- Statut du service ---"
+    systemctl status zabbix-agent2 --no-pager --full
+    echo
+    echo "--- Test de validation de la config ---"
+    /usr/sbin/zabbix_agent2 -c "$ZABBIX_AGENT_CONF" -T
+    echo
+    error_exit "Échec du démarrage de Zabbix Agent 2 - diagnostic ci-dessus"
 fi
 
 # Affichage des informations de configuration
