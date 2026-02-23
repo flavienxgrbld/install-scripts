@@ -97,14 +97,21 @@ fi
 # Modification de la configuration
 info "Application de la configuration"
 
-sed -i "s/^Server=.*/Server=${ZABBIX_SERVER}/" "$ZABBIX_AGENT_CONF"
-sed -i "s/^ServerActive=.*/ServerActive=${ZABBIX_SERVER_ACTIVE}/" "$ZABBIX_AGENT_CONF"
-sed -i "s/^Hostname=.*/Hostname=${ZABBIX_HOSTNAME}/" "$ZABBIX_AGENT_CONF"
+# Fonction pour configurer un paramètre (décommente et modifie)
+configure_param() {
+    local param=$1
+    local value=$2
+    local conf=$3
+    
+    # Supprime les anciennes lignes (commentées ou non)
+    sed -i "/^[#[:space:]]*${param}=/d" "$conf"
+    # Ajoute la nouvelle ligne
+    echo "${param}=${value}" >> "$conf"
+}
 
-# Activation du mode actif par défaut
-if ! grep -q "^ServerActive=" "$ZABBIX_AGENT_CONF"; then
-    echo "ServerActive=${ZABBIX_SERVER_ACTIVE}" >> "$ZABBIX_AGENT_CONF"
-fi
+configure_param "Server" "${ZABBIX_SERVER}" "$ZABBIX_AGENT_CONF"
+configure_param "ServerActive" "${ZABBIX_SERVER_ACTIVE}" "$ZABBIX_AGENT_CONF"
+configure_param "Hostname" "${ZABBIX_HOSTNAME}" "$ZABBIX_AGENT_CONF"
 
 # Configuration des permissions
 chown zabbix:zabbix "$ZABBIX_AGENT_CONF"
@@ -112,25 +119,41 @@ chmod 640 "$ZABBIX_AGENT_CONF"
 
 success "Configuration appliquée"
 
+# Vérification de la syntaxe de la configuration
+info "Vérification de la configuration"
+if zabbix_agent2 -t agent.ping 2>&1 | grep -q "NOTSUPPORTED"; then
+    info "Configuration validée par zabbix_agent2"
+elif zabbix_agent2 -c "$ZABBIX_AGENT_CONF" -T 2>/dev/null; then
+    info "Syntaxe de la configuration correcte"
+else
+    echo "⚠️ Attention: impossible de valider la configuration"
+fi
+
 # Démarrage et activation du service
 info "Activation et démarrage de Zabbix Agent 2"
 systemctl enable zabbix-agent2
+systemctl restart zabbix-agent2
 
-if systemctl restart zabbix-agent2 && systemctl is-active --quiet zabbix-agent2; then
+# Attente du démarrage
+sleep 3
+
+# Vérification détaillée du statut
+if systemctl is-active --quiet zabbix-agent2; then
     success "Zabbix Agent 2 actif et en cours d'exécution"
-else
-    error_exit "Échec du démarrage de Zabbix Agent 2"
-fi
-
-# Vérification du statut
-info "Vérification du statut"
-sleep 2
-
-if systemctl status zabbix-agent2 --no-pager | grep -q "active (running)"; then
     success "Service opérationnel"
 else
-    echo "⚠️ Le service semble avoir un problème"
+    echo "❌ Le service n'a pas démarré correctement"
+    echo
+    echo "=== STATUT DU SERVICE ==="
     systemctl status zabbix-agent2 --no-pager
+    echo
+    echo "=== DERNIÈRES LIGNES DES LOGS ==="
+    journalctl -u zabbix-agent2 -n 20 --no-pager
+    echo
+    echo "=== CONFIGURATION ACTIVE ==="
+    grep -v '^#' "$ZABBIX_AGENT_CONF" | grep -v '^$' | head -20
+    echo
+    error_exit "Échec du démarrage de Zabbix Agent 2 - voir les logs ci-dessus"
 fi
 
 # Affichage des informations de configuration
