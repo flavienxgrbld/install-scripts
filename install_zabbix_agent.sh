@@ -70,7 +70,7 @@ fi
 
 # Installation de l'agent Zabbix 2
 info "Installation de Zabbix Agent 2"
-apt install -y zabbix-agent2 zabbix-agent2-plugin-*
+apt install -y zabbix-agent2
 
 success "Zabbix Agent 2 installé"
 
@@ -87,6 +87,12 @@ ZABBIX_SERVER_ACTIVE=${ZABBIX_SERVER_ACTIVE:-$ZABBIX_SERVER}
 
 read -p "Nom d'hôte de cet agent [$(hostname)] : " ZABBIX_HOSTNAME
 ZABBIX_HOSTNAME=${ZABBIX_HOSTNAME:-$(hostname)}
+
+read -p "Adresse IP d'écoute de l'agent [0.0.0.0] : " LISTEN_IP
+LISTEN_IP=${LISTEN_IP:-0.0.0.0}
+
+read -p "Port d'écoute de l'agent [10050] : " LISTEN_PORT
+LISTEN_PORT=${LISTEN_PORT:-10050}
 
 # Sauvegarde de la configuration originale
 if [ -f "$ZABBIX_AGENT_CONF" ]; then
@@ -112,8 +118,17 @@ configure_param() {
 configure_param "Server" "${ZABBIX_SERVER}" "$ZABBIX_AGENT_CONF"
 configure_param "ServerActive" "${ZABBIX_SERVER_ACTIVE}" "$ZABBIX_AGENT_CONF"
 configure_param "Hostname" "${ZABBIX_HOSTNAME}" "$ZABBIX_AGENT_CONF"
-configure_param "ListenIP" "0.0.0.0" "$ZABBIX_AGENT_CONF"
-configure_param "ListenPort" "10050" "$ZABBIX_AGENT_CONF"
+configure_param "ListenIP" "${LISTEN_IP}" "$ZABBIX_AGENT_CONF"
+configure_param "ListenPort" "${LISTEN_PORT}" "$ZABBIX_AGENT_CONF"
+
+# Désactivation des plugins optionnels qui peuvent causer des problèmes
+info "Désactivation des plugins optionnels"
+cat >> "$ZABBIX_AGENT_CONF" <<EOF
+
+# Plugins désactivés (peuvent causer des erreurs si les dépendances ne sont pas présentes)
+Plugins.SystemRun.LogRemoteCommands=0
+Plugins.NVIDIA.Disabled=1
+EOF
 
 # Configuration des permissions
 chown zabbix:zabbix "$ZABBIX_AGENT_CONF"
@@ -179,6 +194,8 @@ echo "Configuration :"
 echo "  - Serveur Zabbix    : ${ZABBIX_SERVER}"
 echo "  - Serveur actif     : ${ZABBIX_SERVER_ACTIVE}"
 echo "  - Nom d'hôte        : ${ZABBIX_HOSTNAME}"
+echo "  - IP d'écoute       : ${LISTEN_IP}"
+echo "  - Port d'écoute     : ${LISTEN_PORT}"
 echo "  - Fichier de config : ${ZABBIX_AGENT_CONF}"
 echo "  - Version           : Zabbix ${ZABBIX_VERSION}"
 echo "============================================"
