@@ -74,6 +74,11 @@ apt install -y zabbix-agent2
 
 success "Zabbix Agent 2 installé"
 
+# Suppression des plugins optionnels qui peuvent causer des problèmes
+info "Suppression des plugins optionnels installés"
+apt remove -y zabbix-agent2-plugin-nvidia-gpu 2>/dev/null || true
+apt autoremove -y 2>/dev/null || true
+
 # Configuration de l'agent
 info "Configuration de l'agent Zabbix"
 
@@ -123,11 +128,21 @@ configure_param "ListenPort" "${LISTEN_PORT}" "$ZABBIX_AGENT_CONF"
 
 # Désactivation des plugins optionnels qui peuvent causer des problèmes
 info "Désactivation des plugins optionnels"
+
+# Désactivation des configurations de plugins problématiques
+PLUGINS_DIR="/etc/zabbix/zabbix_agent2.d/plugins.d"
+if [ -d "$PLUGINS_DIR" ]; then
+    # Désactiver le plugin NVIDIA s'il existe
+    if [ -f "$PLUGINS_DIR/nvidia.conf" ]; then
+        mv "$PLUGINS_DIR/nvidia.conf" "$PLUGINS_DIR/nvidia.conf.disabled" 2>/dev/null || true
+        info "Plugin NVIDIA désactivé"
+    fi
+fi
+
 cat >> "$ZABBIX_AGENT_CONF" <<EOF
 
 # Plugins désactivés (peuvent causer des erreurs si les dépendances ne sont pas présentes)
 Plugins.SystemRun.LogRemoteCommands=0
-Plugins.NVIDIA.Disabled=1
 EOF
 
 # Configuration des permissions
