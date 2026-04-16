@@ -1,83 +1,66 @@
-#!/bin/bash
+#!/usr/bin/env bash
 set -euo pipefail
 
-# Détection de la version Debian
-if grep -q "bookworm" /etc/os-release; then
-    DEBIAN_VERSION="12"
-    DEBIAN_CODENAME="bookworm"
-elif grep -q "trixie" /etc/os-release; then
-    DEBIAN_VERSION="13"
-    DEBIAN_CODENAME="trixie"
-else
-    echo "❌ ERREUR: Ce script est prévu pour Debian 12 (bookworm) ou Debian 13 (trixie)" >&2
-    exit 1
-fi
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# shellcheck source=/dev/null
+. "$SCRIPT_DIR/install_common.sh"
 
 # Variables de configuration
 ZABBIX_VERSION="7.4"
-ZABBIX_DEB="zabbix-release_latest_${ZABBIX_VERSION}+debian${DEBIAN_VERSION}_all.deb"
-ZABBIX_URL="https://repo.zabbix.com/zabbix/${ZABBIX_VERSION}/release/debian/pool/main/z/zabbix-release/${ZABBIX_DEB}"
 ZABBIX_AGENT_CONF="/etc/zabbix/zabbix_agent2.conf"
 TMP_DIR="/tmp/zabbix_agent_install_$$"
-
-# Fonctions utilitaires
-error_exit() {
-    echo "❌ ERREUR: $1" >&2
-    cleanup
-    exit 1
-}
 
 cleanup() {
     [ -d "$TMP_DIR" ] && rm -rf "$TMP_DIR"
 }
 
-info() {
-    echo "➡️  $1"
-}
-
-success() {
-    echo "✅ $1"
-}
-
 trap cleanup EXIT
 
-# Vérifications préliminaires
-[ "$EUID" -eq 0 ] || error_exit "Ce script doit être exécuté en root"
+ensure_root
+detect_os
+detect_package_manager
 
-info "Détection de Debian ${DEBIAN_VERSION} (${DEBIAN_CODENAME})"
+info "Détection de l'OS : ${OS_NAME} ${OS_VERSION_ID}"
+if ! is_debian_family; then
+    error_exit "Ce script prend en charge principalement Debian/Ubuntu pour l'instant"
+fi
+
+DEBIAN_VERSION="${OS_VERSION_ID%%.*}"
+ZABBIX_DEB="zabbix-release_latest_${ZABBIX_VERSION}+debian${DEBIAN_VERSION}_all.deb"
+ZABBIX_URL="https://repo.zabbix.com/zabbix/${ZABBIX_VERSION}/release/debian/pool/main/z/zabbix-release/${ZABBIX_DEB}"
 
 info "Vérification de la connectivité HTTPS vers repo.zabbix.com"
-curl -fs https://repo.zabbix.com >/dev/null || error_exit "Accès HTTPS à repo.zabbix.com impossible"
+check_url "https://repo.zabbix.com"
 
 success "Environnement validé"
 
 # Mise à jour du système
 info "Mise à jour du système"
-apt update
-apt upgrade -y
+pkg_update
+pkg_upgrade
 export PATH=$PATH:/usr/local/sbin:/usr/sbin:/sbin
 
 # Installation du dépôt Zabbix
 info "Installation du dépôt Zabbix ${ZABBIX_VERSION}"
 if ! dpkg -l | grep -q zabbix-release; then
     mkdir -p "$TMP_DIR"
-    wget -q "$ZABBIX_URL" -O "${TMP_DIR}/${ZABBIX_DEB}"
+    download_file "$ZABBIX_URL" "${TMP_DIR}/${ZABBIX_DEB}"
     dpkg -i "${TMP_DIR}/${ZABBIX_DEB}"
-    apt update
+    pkg_update
 else
     info "Dépôt Zabbix déjà installé"
 fi
 
 # Installation de l'agent Zabbix 2
 info "Installation de Zabbix Agent 2"
-apt install -y zabbix-agent2
+pkg_install zabbix-agent2
 
 success "Zabbix Agent 2 installé"
 
 # Suppression des plugins optionnels qui peuvent causer des problèmes
 info "Suppression des plugins optionnels installés"
-apt remove -y zabbix-agent2-plugin-nvidia-gpu 2>/dev/null || true
-apt autoremove -y 2>/dev/null || true
+pkg_remove zabbix-agent2-plugin-nvidia-gpu 2>/dev/null || true
+pkg_autoremove 2>/dev/null || true
 
 # Configuration de l'agent
 info "Configuration de l'agent Zabbix"

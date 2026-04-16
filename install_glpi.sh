@@ -1,13 +1,20 @@
-#!/bin/bash
+#!/usr/bin/env bash
 
 # Script d'installation de GLPI 11.0.4 sur Debian/Ubuntu
 
-set -e
+set -euo pipefail
 
-# Vérifier si le script est exécuté en tant que root
-if [[ $EUID -ne 0 ]]; then
-   echo "Ce script doit être exécuté en tant que root (utilisez sudo)"
-   exit 1
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# shellcheck source=/dev/null
+. "$SCRIPT_DIR/install_common.sh"
+
+ensure_root
+detect_os
+detect_package_manager
+
+info "Détection de l'OS : ${OS_NAME} ${OS_VERSION_ID}"
+if ! is_debian_family; then
+    error_exit "Ce script prend en charge principalement Debian/Ubuntu pour l'instant"
 fi
 
 # Variables de configuration
@@ -17,11 +24,12 @@ GLPI_DB_USER="glpi"
 PHP_MIN_VERSION="8.2"  # Version minimum requise pour GLPI 11.x
 
 echo "=== Mise à jour du système ==="
-apt update && apt upgrade -y
+pkg_update
+pkg_upgrade
 
 # Ajouter le dépôt Sury pour PHP 8.2+ si nécessaire (Debian/Ubuntu)
 echo "=== Vérification et installation de PHP 8.2+ ==="
-apt install -y lsb-release ca-certificates apt-transport-https software-properties-common gnupg2 curl wget
+pkg_install lsb-release ca-certificates apt-transport-https software-properties-common gnupg2 curl wget
 
 # Ajouter le dépôt Sury pour avoir PHP 8.2+
 if ! grep -q "sury\|ondrej/php" /etc/apt/sources.list /etc/apt/sources.list.d/* 2>/dev/null; then
@@ -37,11 +45,11 @@ if ! grep -q "sury\|ondrej/php" /etc/apt/sources.list /etc/apt/sources.list.d/* 
         rm /tmp/debsuryorg-archive-keyring.deb
         echo "deb [signed-by=/usr/share/keyrings/deb.sury.org-php.gpg] https://packages.sury.org/php/ $(lsb_release -sc) main" > /etc/apt/sources.list.d/sury-php.list
     fi
-    apt update
+    pkg_update
 fi
 
 echo "=== Installation d'Apache2, PHP 8.2+ et extensions ==="
-apt install -y apache2 \
+pkg_install apache2 \
     php8.2 \
     php8.2-apcu \
     php8.2-cli \
@@ -75,7 +83,7 @@ fi
 echo "✓ PHP $PHP_INSTALLED_VERSION est compatible avec GLPI 11.x"
 
 echo "=== Installation de MariaDB ==="
-apt install -y mariadb-server
+pkg_install mariadb-server
 
 echo "=== Configuration de MariaDB ==="
 # Demander les mots de passe
