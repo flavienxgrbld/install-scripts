@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 
-# Script d'installation de GLPI 11.0.4 sur Debian/Ubuntu
+# Script d'installation de GLPI 11.0.4 sur tous les OS supportés
 
 set -euo pipefail
 
@@ -13,8 +13,8 @@ detect_os
 detect_package_manager
 
 info "Détection de l'OS : ${OS_NAME} ${OS_VERSION_ID}"
-if ! is_debian_family; then
-    error_exit "Ce script prend en charge principalement Debian/Ubuntu pour l'instant"
+if ! is_debian_family && ! is_redhat_family && ! is_suse_family && ! is_pacman_family; then
+    error_exit "Ce script prend en charge Debian/Ubuntu/Raspbian, RHEL/CentOS/Oracle/Alma/Rocky/AmazonLinux, SUSE et Arch Linux"
 fi
 
 # Variables de configuration
@@ -27,63 +27,48 @@ echo "=== Mise à jour du système ==="
 pkg_update
 pkg_upgrade
 
-# Ajouter le dépôt Sury pour PHP 8.2+ si nécessaire (Debian/Ubuntu)
-echo "=== Vérification et installation de PHP 8.2+ ==="
-pkg_install lsb-release ca-certificates apt-transport-https software-properties-common gnupg2 curl wget
-
-# Ajouter le dépôt Sury pour avoir PHP 8.2+
-if ! grep -q "sury\|ondrej/php" /etc/apt/sources.list /etc/apt/sources.list.d/* 2>/dev/null; then
-    echo "Ajout du dépôt Ondřej pour PHP 8.2+..."
-    # Détecter si c'est Ubuntu ou Debian
-    if lsb_release -i | grep -q "Ubuntu"; then
-        # Pour Ubuntu : utiliser le PPA
-        add-apt-repository -y ppa:ondrej/php
-    else
-        # Pour Debian : utiliser packages.sury.org
-        curl -sSLo /tmp/debsuryorg-archive-keyring.deb https://packages.sury.org/debsuryorg-archive-keyring.deb
-        dpkg -i /tmp/debsuryorg-archive-keyring.deb
-        rm /tmp/debsuryorg-archive-keyring.deb
-        echo "deb [signed-by=/usr/share/keyrings/deb.sury.org-php.gpg] https://packages.sury.org/php/ $(lsb_release -sc) main" > /etc/apt/sources.list.d/sury-php.list
-    fi
-    pkg_update
-fi
-
-echo "=== Installation d'Apache2, PHP 8.2+ et extensions ==="
-pkg_install apache2 \
-    php8.2 \
-    php8.2-apcu \
-    php8.2-cli \
-    php8.2-common \
-    php8.2-curl \
-    php8.2-gd \
-    php8.2-imap \
-    php8.2-ldap \
-    php8.2-mysql \
-    php8.2-xmlrpc \
-    php8.2-xml \
-    php8.2-mbstring \
-    php8.2-bcmath \
-    php8.2-intl \
-    php8.2-zip \
-    php8.2-redis \
-    php8.2-bz2 \
-    libapache2-mod-php8.2 \
-    php8.2-soap \
-    php-cas
+# Installation de PHP sur tous les OS
+echo "=== Installation de PHP ${PHP_MIN_VERSION}+ ==="
+install_php "$PHP_MIN_VERSION"
 
 # Vérifier la version de PHP installée
 PHP_INSTALLED_VERSION=$(php -r "echo PHP_VERSION;" | cut -d. -f1,2)
 echo "Version PHP installée: $PHP_INSTALLED_VERSION"
 
-if (( $(echo "$PHP_INSTALLED_VERSION < $PHP_MIN_VERSION" | bc -l) )); then
+if (( $(echo "$PHP_INSTALLED_VERSION < $PHP_MIN_VERSION" | bc -l 2>/dev/null || echo "1") )); then
     echo "ERREUR: PHP $PHP_INSTALLED_VERSION est installé mais GLPI 11.x requiert PHP $PHP_MIN_VERSION minimum"
     exit 1
 fi
 
 echo "✓ PHP $PHP_INSTALLED_VERSION est compatible avec GLPI 11.x"
 
+# Installation du serveur web
+echo "=== Installation du serveur web ==="
+install_webserver "apache"
+
+# Installation de la base de données
 echo "=== Installation de MariaDB ==="
-pkg_install mariadb-server
+install_database
+
+# Configuration de PHP
+echo "=== Configuration de PHP ==="
+configure_php "$PHP_MIN_VERSION"
+
+# Extensions PHP supplémentaires selon l'OS
+case "$PKG_MANAGER" in
+    apt)
+        pkg_install php${PHP_MIN_VERSION//./}-apcu php${PHP_MIN_VERSION//./}-imap php${PHP_MIN_VERSION//./}-ldap php${PHP_MIN_VERSION//./}-xmlrpc php${PHP_MIN_VERSION//./}-redis php${PHP_MIN_VERSION//./}-bz2 php${PHP_MIN_VERSION//./}-soap php-cas libapache2-mod-php${PHP_MIN_VERSION//./}
+        ;;
+    dnf|yum)
+        pkg_install php-apcu php-imap php-ldap php-xmlrpc php-redis php-bz2 php-soap php-pecl-apcu
+        ;;
+    zypper)
+        pkg_install php${PHP_MIN_VERSION//./}-apcu php${PHP_MIN_VERSION//./}-imap php${PHP_MIN_VERSION//./}-ldap php${PHP_MIN_VERSION//./}-xmlrpc php${PHP_MIN_VERSION//./}-redis php${PHP_MIN_VERSION//./}-bz2 php${PHP_MIN_VERSION//./}-soap
+        ;;
+    pacman)
+        pkg_install php-apcu php-imap php-ldap php-xmlrpc php-redis
+        ;;
+esac
 
 echo "=== Configuration de MariaDB ==="
 # Demander les mots de passe

@@ -16,18 +16,114 @@ cleanup() {
 
 trap cleanup EXIT
 
+get_repo_base_path() {
+    case "$1" in
+        ubuntu) echo "ubuntu" ;;
+        debian) echo "debian" ;;
+        raspbian) echo "raspbian" ;;
+        centos) echo "centos" ;;
+        rhel) echo "rhel" ;;
+        ol|oraclelinux|oracle) echo "oracle" ;;
+        rocky) echo "rocky" ;;
+        almalinux) echo "alma" ;;
+        amazonlinux) echo "amazonlinux" ;;
+        sles|opensuse) echo "sles" ;;
+        arch) echo "arch" ;;
+        *) return 1 ;;
+    esac
+}
+
+get_zabbix_repo_package() {
+    local os_id="$1"
+    local major="$2"
+    local codename="${3:-}"
+
+    case "$os_id" in
+        ubuntu)
+            if [ -n "$codename" ]; then
+                printf 'zabbix-release_latest_%s+ubuntu%s_all.deb' "$ZABBIX_VERSION" "$codename"
+            else
+                printf 'zabbix-release_latest_%s+ubuntu%s_all.deb' "$ZABBIX_VERSION" "$major"
+            fi
+            ;;
+        debian)
+            printf 'zabbix-release_latest_%s+debian%s_all.deb' "$ZABBIX_VERSION" "$major"
+            ;;
+        raspbian)
+            printf 'zabbix-release_latest_%s+raspbian%s_all.deb' "$ZABBIX_VERSION" "$major"
+            ;;
+        centos|rhel|ol|oraclelinux|oracle|rocky|almalinux)
+            printf 'zabbix-release-latest.el%s.noarch.rpm' "$major"
+            ;;
+        amazonlinux)
+            printf 'zabbix-release-latest.amzn%s.noarch.rpm' "$major"
+            ;;
+        sles|opensuse)
+            printf 'zabbix-release-latest.sles%s.noarch.rpm' "$major"
+            ;;
+        arch)
+            return 1
+            ;;
+        *)
+            return 1
+            ;;
+    esac
+}
+
+configure_zabbix_repository() {
+    local os_path
+    local repo_pkg
+    local os_major
+
+    os_path="$(get_repo_base_path "$OS_ID")" || return 1
+    os_major="${OS_VERSION_ID%%.*}"
+
+    if [ "$os_path" = "arch" ]; then
+        info "Pas de dépôt Zabbix externe requis pour Arch Linux"
+        return 0
+    fi
+
+    repo_pkg="$(get_zabbix_repo_package "$OS_ID" "$os_major" "${VERSION_CODENAME:-}")" || return 1
+
+    if printf '%s' "$repo_pkg" | grep -q '\.deb$'; then
+        ZABBIX_URL="https://repo.zabbix.com/zabbix/${ZABBIX_VERSION}/release/${os_path}/pool/main/z/zabbix-release/${repo_pkg}"
+        ZABBIX_PACKAGE="${repo_pkg}"
+        if ! dpkg-query -W -f='${Status}' zabbix-release 2>/dev/null | grep -q "install ok installed"; then
+            mkdir -p "$TMP_DIR"
+            download_file "$ZABBIX_URL" "${TMP_DIR}/${ZABBIX_PACKAGE}"
+            dpkg -i "${TMP_DIR}/${ZABBIX_PACKAGE}"
+            pkg_update
+        else
+            info "Dépôt Zabbix déjà installé"
+        fi
+        return 0
+    fi
+
+    if printf '%s' "$repo_pkg" | grep -q '\.rpm$'; then
+        ZABBIX_URL="https://repo.zabbix.com/zabbix/${ZABBIX_VERSION}/release/${os_path}/${os_major}/noarch/${repo_pkg}"
+        ZABBIX_PACKAGE="${repo_pkg}"
+        if ! rpm -q zabbix-release >/dev/null 2>&1; then
+            mkdir -p "$TMP_DIR"
+            download_file "$ZABBIX_URL" "${TMP_DIR}/${ZABBIX_PACKAGE}"
+            rpm -Uvh "${TMP_DIR}/${ZABBIX_PACKAGE}"
+            pkg_update
+        else
+            info "Dépôt Zabbix déjà installé"
+        fi
+        return 0
+    fi
+
+    return 1
+}
+
 ensure_root
 detect_os
 detect_package_manager
 
 info "Détection de l'OS : ${OS_NAME} ${OS_VERSION_ID}"
-if ! is_debian_family; then
-    error_exit "Ce script prend en charge principalement Debian/Ubuntu pour l'instant"
+if ! is_debian_family && ! is_redhat_family && ! is_suse_family && ! is_pacman_family; then
+    error_exit "Ce script prend en charge Debian/Ubuntu/Raspbian, RHEL/CentOS/Oracle/Alma/Rocky/AmazonLinux, SUSE et Arch Linux"
 fi
-
-DEBIAN_VERSION="${OS_VERSION_ID%%.*}"
-ZABBIX_DEB="zabbix-release_latest_${ZABBIX_VERSION}+debian${DEBIAN_VERSION}_all.deb"
-ZABBIX_URL="https://repo.zabbix.com/zabbix/${ZABBIX_VERSION}/release/debian/pool/main/z/zabbix-release/${ZABBIX_DEB}"
 
 info "Vérification de la connectivité HTTPS vers repo.zabbix.com"
 check_url "https://repo.zabbix.com"
@@ -42,13 +138,8 @@ export PATH=$PATH:/usr/local/sbin:/usr/sbin:/sbin
 
 # Installation du dépôt Zabbix
 info "Installation du dépôt Zabbix ${ZABBIX_VERSION}"
-if ! dpkg -l | grep -q zabbix-release; then
-    mkdir -p "$TMP_DIR"
-    download_file "$ZABBIX_URL" "${TMP_DIR}/${ZABBIX_DEB}"
-    dpkg -i "${TMP_DIR}/${ZABBIX_DEB}"
-    pkg_update
-else
-    info "Dépôt Zabbix déjà installé"
+if ! configure_zabbix_repository; then
+    error_exit "Impossible de configurer le dépôt Zabbix pour ${OS_NAME}"
 fi
 
 # Installation de l'agent Zabbix 2
