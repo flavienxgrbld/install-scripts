@@ -5,7 +5,12 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck source=/dev/null
 . "$SCRIPT_DIR/install_common.sh"
 
-# Variables de configuration
+# Vérifications préalables
+ensure_root
+detect_os
+detect_package_manager
+
+info "Installation de Zabbix Server..."
 ZABBIX_VERSION="7.4"
 ZABBIX_CONF="/etc/zabbix/zabbix_server.conf"
 TMP_DIR="/tmp/zabbix_install_$$"
@@ -153,7 +158,7 @@ info "Installation du serveur web"
 install_webserver "apache"
 
 info "Installation des paquets Zabbix"
-pkg_install \
+pkg_install_with_rollback \
     zabbix-server-mysql \
     zabbix-frontend-php \
     zabbix-sql-scripts \

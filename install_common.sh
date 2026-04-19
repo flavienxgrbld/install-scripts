@@ -8,27 +8,262 @@ OS_VERSION_ID=""
 OS_ID_LIKE=""
 PKG_MANAGER=""
 
+# Variables pour la gestion d'erreurs
+LOG_FILE="/var/log/install_script.log"
+TEMP_FILES=()
+INSTALLED_PACKAGES=()
+BACKUP_FILES=()
+SCRIPT_NAME="${0##*/}"
+SCRIPT_START_TIME=$(date +%s)
+
+# Fonction de nettoyage
+cleanup() {
+    local exit_code=$?
+    local end_time=$(date +%s)
+    local duration=$((end_time - SCRIPT_START_TIME))
+
+    # Nettoyer les fichiers temporaires
+    for file in "${TEMP_FILES[@]}"; do
+        if [ -f "$file" ] || [ -d "$file" ]; then
+            rm -rf "$file" 2>/dev/null || true
+        fi
+    done
+
+    # Log de la fin du script
+    if [ $exit_code -eq 0 ]; then
+        log "SUCCESS" "Script $SCRIPT_NAME terminé avec succès en ${duration}s"
+        success "Installation terminée avec succès"
+    else
+        log "ERROR" "Script $SCRIPT_NAME échoué (code: $exit_code) après ${duration}s"
+        error_exit "Installation échouée. Consultez $LOG_FILE pour plus de détails."
+    fi
+}
+
+# Configuration du trap pour le nettoyage
+trap cleanup EXIT
+
+# Fonction de logging
+log() {
+    local level="$1"
+    local message="$2"
+    local timestamp=$(date '+%Y-%m-%d %H:%M:%S')
+
+    # Créer le répertoire de logs si nécessaire
+    mkdir -p "$(dirname "$LOG_FILE")" 2>/dev/null || true
+
+    # Écrire dans le fichier de log
+    echo "[$timestamp] [$level] [$SCRIPT_NAME] $message" >> "$LOG_FILE" 2>/dev/null || true
+
+    # Afficher selon le niveau
+    case "$level" in
+        ERROR)
+            echo "❌ $message" >&2
+            ;;
+        WARN)
+            echo "⚠️  $message" >&2
+            ;;
+        INFO)
+            echo "ℹ️  $message"
+            ;;
+        SUCCESS)
+            echo "✅ $message"
+            ;;
+        DEBUG)
+            [ "${DEBUG:-0}" = "1" ] && echo "🔍 $message"
+            ;;
+    esac
+}
+
 error_exit() {
-    echo "❌ ERREUR: $1" >&2
+    log "ERROR" "$1"
     exit 1
 }
 
 info() {
-    echo "➡️  $1"
+    log "INFO" "$1"
 }
 
 success() {
-    echo "✅ $1"
+    log "SUCCESS" "$1"
 }
 
 warn() {
-    echo "⚠️  $1"
+    log "WARN" "$1"
 }
 
+debug() {
+    log "DEBUG" "$1"
+}
+
+# Fonction pour ajouter un fichier temporaire à nettoyer
+add_temp_file() {
+    TEMP_FILES+=("$1")
+}
+
+# Fonction pour sauvegarder un fichier avant modification
+backup_file() {
+    local file="$1"
+    local backup="${file}.backup.$(date +%Y%m%d_%H%M%S)"
+
+    if [ -f "$file" ]; then
+        cp "$file" "$backup"
+        BACKUP_FILES+=("$backup")
+        debug "Sauvegarde créée: $backup"
+    fi
+}
+
+# Fonction pour restaurer les sauvegardes en cas d'erreur
+restore_backups() {
+    for backup in "${BACKUP_FILES[@]}"; do
+        local original="${backup%.backup.*}"
+        if [ -f "$backup" ]; then
+            mv "$backup" "$original"
+            warn "Restauration de la sauvegarde: $original"
+        fi
+    done
+    BACKUP_FILES=()
+}
+
+# Fonction pour marquer un package comme installé (pour rollback)
+mark_package_installed() {
+    INSTALLED_PACKAGES+=("$1")
+}
+
+# Fonction de rollback des packages installés
+rollback_packages() {
+    if [ ${#INSTALLED_PACKAGES[@]} -gt 0 ]; then
+        warn "Rollback des packages installés..."
+        pkg_remove "${INSTALLED_PACKAGES[@]}"
+        INSTALLED_PACKAGES=()
+    fi
+}
+
+# Fonction pour vérifier si une commande existe
 require_command() {
     if ! command -v "$1" >/dev/null 2>&1; then
         error_exit "Commande requise introuvable: $1"
     fi
+}
+
+# Fonction pour vérifier les prérequis
+check_prerequisites() {
+    local prerequisites=("$@")
+
+    info "Vérification des prérequis..."
+    for cmd in "${prerequisites[@]}"; do
+        require_command "$cmd"
+    done
+    debug "Tous les prérequis sont satisfaits"
+}
+
+# Fonction améliorée pour l'installation de packages avec rollback
+pkg_install_with_rollback() {
+    local packages=("$@")
+
+    for pkg in "${packages[@]}"; do
+        if ! pkg_install "$pkg"; then
+            error_exit "Échec de l'installation du package: $pkg"
+        fi
+        mark_package_installed "$pkg"
+    done
+}
+
+# Fonction pour vérifier l'état d'un service
+check_service_status() {
+    local service="$1"
+    local expected_status="${2:-active}"
+
+    if ! service_is_active "$service"; then
+        if [ "$expected_status" = "active" ]; then
+            error_exit "Le service $service n'est pas actif"
+        fi
+    else
+        if [ "$expected_status" = "inactive" ]; then
+            error_exit "Le service $service est actif alors qu'il ne devrait pas l'être"
+        fi
+    fi
+}
+
+# Fonction pour tester une URL avec timeout
+check_url_with_timeout() {
+    local url="$1"
+    local timeout="${2:-10}"
+
+    ensure_download_tool
+    if command -v curl >/dev/null 2>&1; then
+        if ! timeout "$timeout" curl -fsSL --max-time "$timeout" "$url" >/dev/null 2>&1; then
+            error_exit "URL inaccessible: $url"
+        fi
+    elif command -v wget >/dev/null 2>&1; then
+        if ! timeout "$timeout" wget --spider -q --timeout="$timeout" "$url" 2>/dev/null; then
+            error_exit "URL inaccessible: $url"
+        fi
+    else
+        error_exit "Ni curl ni wget n'est installé pour vérifier l'URL: $url"
+    fi
+}
+
+# Fonction pour télécharger un fichier avec gestion d'erreurs
+download_file_safe() {
+    local url="$1"
+    local dest="$2"
+    local temp_file="${dest}.tmp"
+
+    add_temp_file "$temp_file"
+
+    debug "Téléchargement de $url vers $dest"
+    if ! download_file "$url" "$temp_file"; then
+        error_exit "Échec du téléchargement: $url"
+    fi
+
+    mv "$temp_file" "$dest"
+    debug "Téléchargement réussi: $dest"
+}
+
+# Fonction pour valider une configuration
+validate_config() {
+    local config_file="$1"
+    local validator="${2:-}"
+
+    if [ ! -f "$config_file" ]; then
+        error_exit "Fichier de configuration manquant: $config_file"
+    fi
+
+    if [ -n "$validator" ] && ! $validator "$config_file"; then
+        error_exit "Validation échouée pour: $config_file"
+    fi
+
+    debug "Configuration validée: $config_file"
+}
+
+# Fonction pour créer un répertoire avec vérification
+create_dir() {
+    local dir="$1"
+
+    if ! mkdir -p "$dir"; then
+        error_exit "Impossible de créer le répertoire: $dir"
+    fi
+
+    debug "Répertoire créé: $dir"
+}
+
+# Fonction pour changer les permissions avec vérification
+set_permissions() {
+    local path="$1"
+    local permissions="$2"
+    local owner="${3:-}"
+
+    if ! chmod "$permissions" "$path"; then
+        error_exit "Impossible de changer les permissions de: $path"
+    fi
+
+    if [ -n "$owner" ]; then
+        if ! chown "$owner" "$path"; then
+            error_exit "Impossible de changer le propriétaire de: $path"
+        fi
+    fi
+
+    debug "Permissions définies pour $path: $permissions ${owner:+($owner)}"
 }
 
 ensure_download_tool() {
@@ -37,7 +272,7 @@ ensure_download_tool() {
     fi
 
     info "Installation de curl pour le téléchargement de fichiers"
-    pkg_install curl || pkg_install wget
+    pkg_install_with_rollback curl || pkg_install_with_rollback wget
 }
 
 ensure_root() {
@@ -151,23 +386,35 @@ pkg_upgrade() {
 }
 
 pkg_install() {
+    debug "Installation des packages: $@"
     case "$PKG_MANAGER" in
         apt)
-            apt install -y "$@"
+            if ! apt install -y "$@"; then
+                error_exit "Échec de l'installation apt pour: $@"
+            fi
             ;;
         dnf)
-            dnf install -y "$@"
+            if ! dnf install -y "$@"; then
+                error_exit "Échec de l'installation dnf pour: $@"
+            fi
             ;;
         yum)
-            yum install -y "$@"
+            if ! yum install -y "$@"; then
+                error_exit "Échec de l'installation yum pour: $@"
+            fi
             ;;
         zypper)
-            zypper install -y "$@"
+            if ! zypper install -y "$@"; then
+                error_exit "Échec de l'installation zypper pour: $@"
+            fi
             ;;
         pacman)
-            pacman -S --noconfirm "$@"
+            if ! pacman -S --noconfirm "$@"; then
+                error_exit "Échec de l'installation pacman pour: $@"
+            fi
             ;;
     esac
+    debug "Packages installés avec succès: $@"
 }
 
 pkg_remove() {
@@ -252,13 +499,19 @@ download_file() {
     local dest="$2"
 
     ensure_download_tool
+    debug "Téléchargement de $url vers $dest"
     if command -v curl >/dev/null 2>&1; then
-        curl -fsSL "$url" -o "$dest"
+        if ! curl -fsSL "$url" -o "$dest"; then
+            error_exit "Échec du téléchargement avec curl: $url"
+        fi
     elif command -v wget >/dev/null 2>&1; then
-        wget -q "$url" -O "$dest"
+        if ! wget -q "$url" -O "$dest"; then
+            error_exit "Échec du téléchargement avec wget: $url"
+        fi
     else
         error_exit "Ni curl ni wget n'est installé pour télécharger: $url"
     fi
+    debug "Téléchargement réussi: $dest"
 }
 
 # Installation de PHP sur différents OS
@@ -324,71 +577,84 @@ install_php() {
 
 # Installation de MariaDB/MySQL sur différents OS
 install_database() {
+    info "Installation de la base de données..."
     case "$PKG_MANAGER" in
         apt)
-            pkg_install mariadb-server mariadb-client
+            pkg_install_with_rollback mariadb-server mariadb-client
             service_enable mariadb
             service_restart mariadb
+            check_service_status mariadb
             ;;
 
         dnf)
-            pkg_install mariadb-server mariadb
+            pkg_install_with_rollback mariadb-server mariadb
             service_enable mariadb
             service_restart mariadb
+            check_service_status mariadb
             ;;
 
         yum)
-            pkg_install mariadb-server mariadb
+            pkg_install_with_rollback mariadb-server mariadb
             service_enable mariadb
             service_restart mariadb
+            check_service_status mariadb
             ;;
 
         zypper)
-            pkg_install mariadb mariadb-client
+            pkg_install_with_rollback mariadb mariadb-client
             service_enable mysql
             service_restart mysql
+            check_service_status mysql
             ;;
 
         pacman)
-            pkg_install mariadb
+            pkg_install_with_rollback mariadb
             mariadb-install-db --user=mysql --basedir=/usr --datadir=/var/lib/mysql
             service_enable mariadb
             service_restart mariadb
+            check_service_status mariadb
             ;;
     esac
+    success "Base de données installée et démarrée"
 }
 
 # Installation d'Apache/Nginx sur différents OS
 install_webserver() {
     local webserver="${1:-apache}"
 
+    info "Installation du serveur web: $webserver"
     case "$webserver" in
         apache)
             case "$PKG_MANAGER" in
                 apt)
-                    pkg_install apache2
+                    pkg_install_with_rollback apache2
                     service_enable apache2
                     service_restart apache2
+                    check_service_status apache2
                     ;;
                 dnf)
-                    pkg_install httpd
+                    pkg_install_with_rollback httpd
                     service_enable httpd
                     service_restart httpd
+                    check_service_status httpd
                     ;;
                 yum)
-                    pkg_install httpd
+                    pkg_install_with_rollback httpd
                     service_enable httpd
                     service_restart httpd
+                    check_service_status httpd
                     ;;
                 zypper)
-                    pkg_install apache2
+                    pkg_install_with_rollback apache2
                     service_enable apache2
                     service_restart apache2
+                    check_service_status apache2
                     ;;
                 pacman)
-                    pkg_install apache
+                    pkg_install_with_rollback apache
                     service_enable httpd
                     service_restart httpd
+                    check_service_status httpd
                     ;;
             esac
             ;;
@@ -396,54 +662,74 @@ install_webserver() {
         nginx)
             case "$PKG_MANAGER" in
                 apt)
-                    pkg_install nginx
+                    pkg_install_with_rollback nginx
                     service_enable nginx
                     service_restart nginx
+                    check_service_status nginx
                     ;;
                 dnf)
-                    pkg_install nginx
+                    pkg_install_with_rollback nginx
                     service_enable nginx
                     service_restart nginx
+                    check_service_status nginx
                     ;;
                 yum)
-                    pkg_install nginx
+                    pkg_install_with_rollback nginx
                     service_enable nginx
                     service_restart nginx
+                    check_service_status nginx
                     ;;
                 zypper)
-                    pkg_install nginx
+                    pkg_install_with_rollback nginx
                     service_enable nginx
                     service_restart nginx
+                    check_service_status nginx
                     ;;
                 pacman)
-                    pkg_install nginx
+                    pkg_install_with_rollback nginx
                     service_enable nginx
                     service_restart nginx
+                    check_service_status nginx
                     ;;
             esac
             ;;
     esac
+    success "Serveur web $webserver installé et démarré"
 }
 
 # Configuration de base de PHP pour GLPI/Zabbix
 configure_php() {
-    local php_ini="/etc/php/${1:-8.2}/cli/php.ini"
-    local fpm_ini="/etc/php/${1:-8.2}/fpm/php.ini"
+    local php_version="${1:-8.2}"
+    local php_ini="/etc/php/${php_version}/cli/php.ini"
+    local fpm_ini="/etc/php/${php_version}/fpm/php.ini"
+
+    info "Configuration de PHP ${php_version}..."
 
     # Configuration PHP commune
     for ini_file in "$php_ini" "$fpm_ini"; do
         if [ -f "$ini_file" ]; then
+            backup_file "$ini_file"
+            debug "Configuration de $ini_file"
+
             # Augmenter les limites mémoire et temps d'exécution
-            sed -i 's/memory_limit = .*/memory_limit = 256M/' "$ini_file" || true
-            sed -i 's/max_execution_time = .*/max_execution_time = 600/' "$ini_file" || true
-            sed -i 's/upload_max_filesize = .*/upload_max_filesize = 50M/' "$ini_file" || true
-            sed -i 's/post_max_size = .*/post_max_size = 50M/' "$ini_file" || true
-            sed -i 's/max_input_time = .*/max_input_time = 300/' "$ini_file" || true
+            sed -i 's/memory_limit = .*/memory_limit = 256M/' "$ini_file" || warn "Impossible de modifier memory_limit dans $ini_file"
+            sed -i 's/max_execution_time = .*/max_execution_time = 600/' "$ini_file" || warn "Impossible de modifier max_execution_time dans $ini_file"
+            sed -i 's/upload_max_filesize = .*/upload_max_filesize = 50M/' "$ini_file" || warn "Impossible de modifier upload_max_filesize dans $ini_file"
+            sed -i 's/post_max_size = .*/post_max_size = 50M/' "$ini_file" || warn "Impossible de modifier post_max_size dans $ini_file"
+            sed -i 's/max_input_time = .*/max_input_time = 300/' "$ini_file" || warn "Impossible de modifier max_input_time dans $ini_file"
+        else
+            debug "Fichier PHP non trouvé: $ini_file"
         fi
     done
 
     # Redémarrer PHP-FPM si nécessaire
     if command -v systemctl >/dev/null 2>&1; then
-        systemctl restart php*-fpm 2>/dev/null || true
+        if systemctl restart php*-fpm 2>/dev/null; then
+            debug "PHP-FPM redémarré"
+        else
+            warn "Impossible de redémarrer PHP-FPM"
+        fi
     fi
+
+    success "Configuration PHP terminée"
 }

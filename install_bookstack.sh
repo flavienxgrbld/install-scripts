@@ -1,6 +1,6 @@
-#!/usr/bin/env bash
+﻿#!/usr/bin/env bash
 
-# Script d'installation de BookStack sur tous les OS supportés
+# Script d'installation de BookStack sur tous les OS supportÃ©s
 
 set -euo pipefail
 
@@ -12,7 +12,7 @@ ensure_root
 detect_os
 detect_package_manager
 
-info "Détection de l'OS : ${OS_NAME} ${OS_VERSION_ID}"
+info "DÃ©tection de l'OS : ${OS_NAME} ${OS_VERSION_ID}"
 if ! is_debian_family && ! is_redhat_family && ! is_suse_family && ! is_pacman_family; then
     error_exit "Ce script prend en charge Debian/Ubuntu/Raspbian, RHEL/CentOS/Oracle/Alma/Rocky/AmazonLinux, SUSE et Arch Linux"
 fi
@@ -25,7 +25,7 @@ PHP_MIN_VERSION="8.1"
 BOOKSTACK_ADMIN_EMAIL="admin@example.com"
 BOOKSTACK_APP_KEY=""
 
-echo "=== Mise à jour du système ==="
+echo "=== Mise Ã  jour du systÃ¨me ==="
 pkg_update
 pkg_upgrade
 
@@ -33,22 +33,22 @@ pkg_upgrade
 echo "=== Installation de PHP ${PHP_MIN_VERSION}+ ==="
 install_php "$PHP_MIN_VERSION"
 
-# Vérifier la version de PHP installée
+# VÃ©rifier la version de PHP installÃ©e
 PHP_INSTALLED_VERSION=$(php -r "echo PHP_VERSION;" | cut -d. -f1,2)
-echo "Version PHP installée: $PHP_INSTALLED_VERSION"
+echo "Version PHP installÃ©e: $PHP_INSTALLED_VERSION"
 
 if (( $(echo "$PHP_INSTALLED_VERSION < $PHP_MIN_VERSION" | bc -l 2>/dev/null || echo "1") )); then
-    echo "ERREUR: PHP $PHP_INSTALLED_VERSION est installé mais BookStack requiert PHP $PHP_MIN_VERSION minimum"
+    echo "ERREUR: PHP $PHP_INSTALLED_VERSION est installÃ© mais BookStack requiert PHP $PHP_MIN_VERSION minimum"
     exit 1
 fi
 
-echo "✓ PHP $PHP_INSTALLED_VERSION est compatible avec BookStack"
+echo "âœ“ PHP $PHP_INSTALLED_VERSION est compatible avec BookStack"
 
 # Installation du serveur web
 echo "=== Installation du serveur web ==="
 install_webserver "apache"
 
-# Installation de la base de données
+# Installation de la base de donnÃ©es
 echo "=== Installation de MariaDB ==="
 install_database
 
@@ -56,34 +56,34 @@ install_database
 echo "=== Configuration de PHP ==="
 configure_php "$PHP_MIN_VERSION"
 
-# Extensions PHP supplémentaires selon l'OS
+# Extensions PHP supplÃ©mentaires selon l'OS
 case "$PKG_MANAGER" in
     apt)
-        pkg_install php${PHP_MIN_VERSION//./}-mysql php${PHP_MIN_VERSION//./}-gd php${PHP_MIN_VERSION//./}-curl php${PHP_MIN_VERSION//./}-zip php${PHP_MIN_VERSION//./}-dom php${PHP_MIN_VERSION//./}-mbstring php${PHP_MIN_VERSION//./}-xml php${PHP_MIN_VERSION//./}-simplexml php${PHP_MIN_VERSION//./}-xmlwriter php${PHP_MIN_VERSION//./}-tokenizer php${PHP_MIN_VERSION//./}-fileinfo php${PHP_MIN_VERSION//./}-iconv php${PHP_MIN_VERSION//./}-tidy
+        pkg_install_with_rollback php${PHP_MIN_VERSION//./}-mysql php${PHP_MIN_VERSION//./}-gd php${PHP_MIN_VERSION//./}-curl php${PHP_MIN_VERSION//./}-zip php${PHP_MIN_VERSION//./}-dom php${PHP_MIN_VERSION//./}-mbstring php${PHP_MIN_VERSION//./}-xml php${PHP_MIN_VERSION//./}-simplexml php${PHP_MIN_VERSION//./}-xmlwriter php${PHP_MIN_VERSION//./}-tokenizer php${PHP_MIN_VERSION//./}-fileinfo php${PHP_MIN_VERSION//./}-iconv php${PHP_MIN_VERSION//./}-tidy
         ;;
     dnf|yum)
-        pkg_install php-mysqlnd php-gd php-curl php-zip php-dom php-mbstring php-xml php-simplexml php-xmlwriter php-tokenizer php-fileinfo php-iconv php-tidy
+        pkg_install_with_rollback php-mysqlnd php-gd php-curl php-zip php-dom php-mbstring php-xml php-simplexml php-xmlwriter php-tokenizer php-fileinfo php-iconv php-tidy
         ;;
     zypper)
-        pkg_install php${PHP_MIN_VERSION//./}-mysql php${PHP_MIN_VERSION//./}-gd php${PHP_MIN_VERSION//./}-curl php${PHP_MIN_VERSION//./}-zip php${PHP_MIN_VERSION//./}-dom php${PHP_MIN_VERSION//./}-mbstring php${PHP_MIN_VERSION//./}-xml php${PHP_MIN_VERSION//./}-simplexml php${PHP_MIN_VERSION//./}-xmlwriter php${PHP_MIN_VERSION//./}-tokenizer php${PHP_MIN_VERSION//./}-fileinfo php${PHP_MIN_VERSION//./}-iconv php${PHP_MIN_VERSION//./}-tidy
+        pkg_install_with_rollback php${PHP_MIN_VERSION//./}-mysql php${PHP_MIN_VERSION//./}-gd php${PHP_MIN_VERSION//./}-curl php${PHP_MIN_VERSION//./}-zip php${PHP_MIN_VERSION//./}-dom php${PHP_MIN_VERSION//./}-mbstring php${PHP_MIN_VERSION//./}-xml php${PHP_MIN_VERSION//./}-simplexml php${PHP_MIN_VERSION//./}-xmlwriter php${PHP_MIN_VERSION//./}-tokenizer php${PHP_MIN_VERSION//./}-fileinfo php${PHP_MIN_VERSION//./}-iconv php${PHP_MIN_VERSION//./}-tidy
         ;;
     pacman)
-        pkg_install php-gd php-intl php-sqlite
+        pkg_install_with_rollback php-gd php-intl php-sqlite
         ;;
 esac
 
-# Installation d'outils supplémentaires
-echo "=== Installation d'outils supplémentaires ==="
-pkg_install wget unzip curl git composer
+# Installation d'outils supplÃ©mentaires
+echo "=== Installation d'outils supplÃ©mentaires ==="
+pkg_install_with_rollback wget unzip curl git composer
 
 # Configuration de MariaDB
 echo "=== Configuration de MariaDB ==="
-read -sp "Entrez le mot de passe root MySQL à définir: " MYSQL_ROOT_PASS
+read -sp "Entrez le mot de passe root MySQL Ã  dÃ©finir: " MYSQL_ROOT_PASS
 echo
 read -sp "Entrez le mot de passe pour l'utilisateur BookStack (DB): " BOOKSTACK_DB_PASS
 echo
 
-# Sécurisation de MySQL
+# SÃ©curisation de MySQL
 mysql -e "ALTER USER 'root'@'localhost' IDENTIFIED BY '${MYSQL_ROOT_PASS}';"
 mysql -uroot -p"${MYSQL_ROOT_PASS}" <<EOSQL
 DELETE FROM mysql.user WHERE User='';
@@ -93,7 +93,7 @@ DELETE FROM mysql.db WHERE Db='test' OR Db='test\\_%';
 FLUSH PRIVILEGES;
 EOSQL
 
-# Création de la base de données BookStack
+# CrÃ©ation de la base de donnÃ©es BookStack
 mysql -uroot -p"${MYSQL_ROOT_PASS}" <<EOSQL
 CREATE DATABASE ${BOOKSTACK_DB_NAME} CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
 CREATE USER '${BOOKSTACK_DB_USER}'@'localhost' IDENTIFIED BY '${BOOKSTACK_DB_PASS}';
@@ -101,10 +101,10 @@ GRANT ALL PRIVILEGES ON ${BOOKSTACK_DB_NAME}.* TO '${BOOKSTACK_DB_USER}'@'localh
 FLUSH PRIVILEGES;
 EOSQL
 
-echo "✓ Base de données BookStack créée"
+echo "âœ“ Base de donnÃ©es BookStack crÃ©Ã©e"
 
-# Téléchargement et installation de BookStack
-echo "=== Téléchargement et installation de BookStack ==="
+# TÃ©lÃ©chargement et installation de BookStack
+echo "=== TÃ©lÃ©chargement et installation de BookStack ==="
 cd /tmp
 
 if [ "$BOOKSTACK_VERSION" = "latest" ]; then
@@ -119,7 +119,7 @@ wget "$BOOKSTACK_URL" -O bookstack.zip
 unzip bookstack.zip
 rm bookstack.zip
 
-# Déplacement vers /var/www
+# DÃ©placement vers /var/www
 if [ -d "/var/www/bookstack" ]; then
     mv "/var/www/bookstack" "/var/www/bookstack.bak.$(date +%Y%m%d_%H%M%S)"
 fi
@@ -129,11 +129,11 @@ chown -R www-data:www-data /var/www/bookstack 2>/dev/null || chown -R apache:apa
 
 cd /var/www/bookstack
 
-# Installation des dépendances PHP avec Composer
-echo "=== Installation des dépendances PHP ==="
+# Installation des dÃ©pendances PHP avec Composer
+echo "=== Installation des dÃ©pendances PHP ==="
 composer install --no-dev --optimize-autoloader
 
-# Génération de la clé d'application
+# GÃ©nÃ©ration de la clÃ© d'application
 BOOKSTACK_APP_KEY=$(php artisan key:generate --show)
 
 # Configuration de l'environnement
@@ -190,12 +190,12 @@ chmod -R 755 storage
 chmod -R 755 bootstrap/cache
 chmod -R 755 public/uploads
 
-# Migration de la base de données
-echo "=== Migration de la base de données ==="
+# Migration de la base de donnÃ©es
+echo "=== Migration de la base de donnÃ©es ==="
 php artisan migrate --force
 
-# Création d'un utilisateur administrateur
-echo "=== Création de l'utilisateur administrateur ==="
+# CrÃ©ation d'un utilisateur administrateur
+echo "=== CrÃ©ation de l'utilisateur administrateur ==="
 read -p "Nom d'utilisateur administrateur BookStack: " BOOKSTACK_ADMIN_USER
 read -sp "Mot de passe administrateur BookStack: " BOOKSTACK_ADMIN_PASS
 echo
@@ -220,7 +220,7 @@ cat > /etc/apache2/sites-available/bookstack.conf <<EOF
 </VirtualHost>
 EOF
 
-# Activation du site et des modules nécessaires
+# Activation du site et des modules nÃ©cessaires
 a2ensite bookstack.conf 2>/dev/null || true
 a2enmod rewrite 2>/dev/null || true
 
@@ -234,31 +234,31 @@ if [ -f "$PHP_INI_FILE" ]; then
     sed -i 's/max_execution_time = .*/max_execution_time = 300/' "$PHP_INI_FILE"
 fi
 
-# Redémarrage des services
-echo "=== Redémarrage des services ==="
+# RedÃ©marrage des services
+echo "=== RedÃ©marrage des services ==="
 systemctl restart apache2 2>/dev/null || systemctl restart httpd 2>/dev/null || systemctl restart nginx
 systemctl restart mariadb 2>/dev/null || systemctl restart mysql
 
 echo
 echo "============================================"
-echo "🎉 BOOKSTACK INSTALLÉ AVEC SUCCÈS"
+echo "ðŸŽ‰ BOOKSTACK INSTALLÃ‰ AVEC SUCCÃˆS"
 echo "============================================"
-echo "URL d'accès : http://votre-serveur"
+echo "URL d'accÃ¨s : http://votre-serveur"
 echo "Utilisateur admin : ${BOOKSTACK_ADMIN_USER}"
 echo "Email admin : ${BOOKSTACK_ADMIN_EMAIL}"
 echo "Mot de passe admin : ${BOOKSTACK_ADMIN_PASS}"
 echo
-echo "Base de données :"
+echo "Base de donnÃ©es :"
 echo "  - Nom : ${BOOKSTACK_DB_NAME}"
 echo "  - Utilisateur : ${BOOKSTACK_DB_USER}"
 echo "  - Mot de passe : ${BOOKSTACK_DB_PASS}"
 echo
-echo "Actions recommandées :"
-echo "  1. Configurer HTTPS (Let's Encrypt recommandé)"
+echo "Actions recommandÃ©es :"
+echo "  1. Configurer HTTPS (Let's Encrypt recommandÃ©)"
 echo "  2. Configurer les sauvegardes automatiques"
-echo "  3. Personnaliser les paramètres (thème, langues, etc.)"
+echo "  3. Personnaliser les paramÃ¨tres (thÃ¨me, langues, etc.)"
 echo "  4. Configurer SMTP pour les notifications"
-echo "  5. Installer des extensions supplémentaires"
+echo "  5. Installer des extensions supplÃ©mentaires"
 echo
 echo "Commandes utiles :"
 echo "  - Artisan : cd /var/www/bookstack && php artisan --help"
