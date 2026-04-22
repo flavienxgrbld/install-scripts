@@ -786,46 +786,15 @@ configure_php() {
         fpm_ini="/etc/php/fpm/php.ini"
         debug "Utilisation de PHP générique"
     else
-        warn "Fichiers php.ini non trouvés, configuration PHP ignorée"
-        return 0
+        # Chercher n'importe quelle version de PHP installée
+        php_ini=$(find /etc/php -name "php.ini" -path "*/cli/*" -print -quit 2>/dev/null) || php_ini=""
+        if [ -n "$php_ini" ]; then
+            fpm_ini=$(find /etc/php -name "php.ini" -path "*/fpm/*" -print -quit 2>/dev/null) || fpm_ini=""
+            debug "Version PHP détectée: $php_ini"
+        fi
     fi
 
-    # Configuration PHP commune
-    for ini_file in "$php_ini" "$fpm_ini"; do
-        if [ -z "$ini_file" ] || [ ! -f "$ini_file" ]; then
-            continue
-        fi
-        
-        debug "Configuration de $ini_file"
-        sed -i 's/^memory_limit = .*/memory_limit = 256M/' "$ini_file" 2>/dev/null
-        sed -i 's/^max_execution_time = .*/max_execution_time = 600/' "$ini_file" 2>/dev/null
-        sed -i 's/^upload_max_filesize = .*/upload_max_filesize = 50M/' "$ini_file" 2>/dev/null
-        sed -i 's/^post_max_size = .*/post_max_size = 50M/' "$ini_file" 2>/dev/null
-        sed -i 's/^max_input_time = .*/max_input_time = 300/' "$ini_file" 2>/dev/null
-    done
-
-# Configuration de base de PHP pour GLPI/Zabbix
-configure_php() {
-    local php_version="${1:-8.2}"
-    local php_ini=""
-    local fpm_ini=""
-    
-    info "Configuration de PHP..."
-
-    # Chercher les fichiers php.ini dans les dossiers version-spécifiques
-    if [ -f "/etc/php/8.4/cli/php.ini" ]; then
-        php_ini="/etc/php/8.4/cli/php.ini"
-        fpm_ini="/etc/php/8.4/fpm/php.ini"
-        debug "Utilisation de PHP 8.4"
-    elif [ -f "/etc/php/8.2/cli/php.ini" ]; then
-        php_ini="/etc/php/8.2/cli/php.ini"
-        fpm_ini="/etc/php/8.2/fpm/php.ini"
-        debug "Utilisation de PHP 8.2"
-    elif [ -f "/etc/php/${php_version}/cli/php.ini" ]; then
-        php_ini="/etc/php/${php_version}/cli/php.ini"
-        fpm_ini="/etc/php/${php_version}/fpm/php.ini"
-        debug "Utilisation de PHP ${php_version}"
-    else
+    if [ -z "$php_ini" ]; then
         warn "Fichiers php.ini non trouvés, configuration PHP ignorée"
         return 0
     fi
@@ -845,12 +814,22 @@ configure_php() {
     done
 
     # Redémarrer PHP-FPM si le service existe
-    if systemctl list-units --type service 2>/dev/null | grep -q "php8.4-fpm"; then
-        systemctl restart php8.4-fpm 2>/dev/null || true
-        debug "PHP 8.4 FPM redémarré"
-    elif systemctl list-units --type service 2>/dev/null | grep -q "php8.2-fpm"; then
-        systemctl restart php8.2-fpm 2>/dev/null || true
-        debug "PHP 8.2 FPM redémarré"
+    if command -v systemctl >/dev/null 2>&1; then
+        debug "Tentative de redémarrage de PHP-FPM..."
+        # Chercher les services php*-fpm sans utiliser de pipe
+        local fpm_service
+        fpm_service=$(systemctl list-units --type service --all 2>/dev/null | grep "php.*fpm\.service" | head -1 | awk '{print $1}' | sed 's/\.service$//') || fpm_service=""
+        
+        if [ -n "$fpm_service" ]; then
+            debug "Service PHP-FPM trouvé: $fpm_service"
+            if systemctl restart "$fpm_service" 2>/dev/null; then
+                debug "Service PHP-FPM $fpm_service redémarré avec succès"
+            else
+                debug "Impossible de redémarrer le service PHP-FPM"
+            fi
+        else
+            debug "Aucun service PHP-FPM trouvé"
+        fi
     fi
 
     success "Configuration PHP terminée"
