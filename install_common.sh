@@ -159,13 +159,26 @@ check_prerequisites() {
 # Fonction améliorée pour l'installation de packages avec rollback
 pkg_install_with_rollback() {
     local packages=("$@")
+    local failed_packages=()
+    local success_count=0
 
     for pkg in "${packages[@]}"; do
-        if ! pkg_install "$pkg"; then
-            error_exit "Échec de l'installation du package: $pkg"
+        if pkg_install "$pkg" 2>/dev/null; then
+            mark_package_installed "$pkg"
+            ((success_count++))
+        else
+            failed_packages+=("$pkg")
+            debug "Impossible d'installer le package: $pkg (continuant...)"
         fi
-        mark_package_installed "$pkg"
     done
+    
+    if [ $success_count -eq 0 ] && [ ${#failed_packages[@]} -gt 0 ]; then
+        error_exit "Aucun des packages n'a pu être installé: ${failed_packages[*]}"
+    fi
+    
+    if [ ${#failed_packages[@]} -gt 0 ]; then
+        warn "Quelques packages n'ont pas pu être installés: ${failed_packages[*]}"
+    fi
 }
 
 # Fonction pour vérifier l'état d'un service
@@ -389,32 +402,33 @@ pkg_install() {
     debug "Installation des packages: $@"
     case "$PKG_MANAGER" in
         apt)
-            if ! apt install -y "$@"; then
-                error_exit "Échec de l'installation apt pour: $@"
+            if ! apt install -y "$@" 2>&1; then
+                return 1
             fi
             ;;
         dnf)
-            if ! dnf install -y "$@"; then
-                error_exit "Échec de l'installation dnf pour: $@"
+            if ! dnf install -y "$@" 2>&1; then
+                return 1
             fi
             ;;
         yum)
-            if ! yum install -y "$@"; then
-                error_exit "Échec de l'installation yum pour: $@"
+            if ! yum install -y "$@" 2>&1; then
+                return 1
             fi
             ;;
         zypper)
-            if ! zypper install -y "$@"; then
-                error_exit "Échec de l'installation zypper pour: $@"
+            if ! zypper install -y "$@" 2>&1; then
+                return 1
             fi
             ;;
         pacman)
-            if ! pacman -S --noconfirm "$@"; then
-                error_exit "Échec de l'installation pacman pour: $@"
+            if ! pacman -S --noconfirm "$@" 2>&1; then
+                return 1
             fi
             ;;
     esac
     debug "Packages installés avec succès: $@"
+    return 0
 }
 
 pkg_remove() {
@@ -520,23 +534,59 @@ install_php() {
 
     case "$PKG_MANAGER" in
         apt)
-            # Pour Debian/Ubuntu, utiliser les dépôts Sury/Ondrej
-            pkg_install lsb-release ca-certificates apt-transport-https software-properties-common gnupg2 curl wget
+            # Pour Debian/Ubuntu, installer les dépendances préalables
+            pkg_install lsb-release ca-certificates apt-transport-https software-properties-common gnupg2 curl wget || true
 
-            if ! grep -q "sury\|ondrej/php" /etc/apt/sources.list /etc/apt/sources.list.d/* 2>/dev/null; then
-                info "Ajout du dépôt PHP pour ${OS_NAME}..."
+            # Essayer d'abord les dépôts officiels pour les versions récentes de Debian
+            if pkg_install "php${php_version}" "php${php_version}-cli" "php${php_version}-common" "php${php_version}-mysql" "php${php_version}-zip" "php${php_version}-gd" "php${php_version}-mbstring" "php${php_version}-curl" "php${php_version}-xml" "php${php_version}-bcmath" "php${php_version}-json" "php${php_version}-intl" "php${php_version}-fpm" 2>/dev/null; then
+                success "PHP ${php_version} installé depuis les dépôts officiels"
+            else
+                info "PHP ${php_version} non trouvé dans les dépôts officiels, ajout du dépôt externe..."
+                
                 if is_ubuntu; then
-                    add-apt-repository -y ppa:ondrej/php
+                    add-apt-repository -y ppa:ondrej/php 2>/dev/null || true
+                    pkg_update 2>/dev/null || true
                 else
-                    curl -sSLo /tmp/debsuryorg-archive-keyring.deb https://packages.sury.org/debsuryorg-archive-keyring.deb
-                    dpkg -i /tmp/debsuryorg-archive-keyring.deb
-                    rm -f /tmp/debsuryorg-archive-keyring.deb
-                    echo "deb [signed-by=/usr/share/keyrings/deb.sury.org-php.gpg] https://packages.sury.org/php/ $(lsb_release -sc) main" > /etc/apt/sources.list.d/sury-php.list
+                    # Pour Debian, utiliser le dépôt Sury avec fallback
+                    local codename=$(lsb_release -sc 2>/dev/null || echo "bookworm")
+                    local sury_keyring="/usr/share/keyrings/deb.sury.org-php.gpg"
+                    
+                    info "Tentative d'ajout du dépôt Sury pour Debian..."
+                    if curl -sf https://packages.sury.org/php/apt.gpg > /dev/null 2>&1; then
+                        if [ -f /tmp/debsuryorg-archive-keyring.deb ]; then
+                            rm -f /tmp/debsuryorg-archive-keyring.deb
+                        fi
+                        if curl -sSLo /tmp/debsuryorg-archive-keyring.deb https://packages.sury.org/debsuryorg-archive-keyring.deb 2>/dev/null; then
+                            dpkg -i /tmp/debsuryorg-archive-keyring.deb 2>/dev/null || true
+                            rm -f /tmp/debsuryorg-archive-keyring.deb
+                            
+                            # Vérifier que le dépôt existe réellement pour ce codename
+                            if curl -sf "https://packages.sury.org/php/dists/${codename}/Release" > /dev/null 2>&1; then
+                                echo "deb [signed-by=${sury_keyring}] https://packages.sury.org/php/ ${codename} main" > /etc/apt/sources.list.d/sury-php.list
+                                info "Dépôt Sury ajouté pour ${codename}"
+                            else
+                                info "Codename ${codename} non supporté par Sury, utilisation de bookworm"
+                                echo "deb [signed-by=${sury_keyring}] https://packages.sury.org/php/ bookworm main" > /etc/apt/sources.list.d/sury-php.list
+                            fi
+                            pkg_update 2>/dev/null || true
+                        else
+                            warn "Impossible de télécharger la clé Sury"
+                        fi
+                    fi
                 fi
-                pkg_update
+                
+                # Essayer l'installation à nouveau après ajout du dépôt
+                if pkg_install "php${php_version}" "php${php_version}-cli" "php${php_version}-common" "php${php_version}-mysql" "php${php_version}-zip" "php${php_version}-gd" "php${php_version}-mbstring" "php${php_version}-curl" "php${php_version}-xml" "php${php_version}-bcmath" "php${php_version}-json" "php${php_version}-intl" "php${php_version}-fpm" 2>/dev/null; then
+                    success "PHP ${php_version} installé depuis le dépôt externe"
+                else
+                    info "PHP ${php_version} non disponible, installation de PHP générique..."
+                    if pkg_install "php" "php-cli" "php-common" "php-mysql" "php-zip" "php-gd" "php-mbstring" "php-curl" "php-xml" "php-bcmath" "php-json" "php-intl" "php-fpm" 2>/dev/null; then
+                        success "PHP générique installé"
+                    else
+                        error_exit "Impossible d'installer PHP"
+                    fi
+                fi
             fi
-
-            pkg_install "php${php_version}" "php${php_version}-cli" "php${php_version}-common" "php${php_version}-mysql" "php${php_version}-zip" "php${php_version}-gd" "php${php_version}-mbstring" "php${php_version}-curl" "php${php_version}-xml" "php${php_version}-bcmath" "php${php_version}-json" "php${php_version}-intl" "php${php_version}-fpm"
             ;;
 
         dnf)
@@ -580,35 +630,56 @@ install_database() {
     info "Installation de la base de données..."
     case "$PKG_MANAGER" in
         apt)
-            pkg_install_with_rollback mariadb-server mariadb-client
-            service_enable mariadb
-            service_restart mariadb
-            check_service_status mariadb
+            # Debian 13 peut avoir une configuration MariaDB différente
+            # Essayer d'abord l'installation standard
+            if ! pkg_install_with_rollback mariadb-server mariadb-client 2>/dev/null; then
+                info "Installation standard MariaDB échouée, essai du paquet server uniquement..."
+                pkg_install_with_rollback mariadb-server || \
+                pkg_install_with_rollback mysql-server || \
+                error_exit "Impossible d'installer MariaDB ou MySQL"
+            fi
+            
+            # Vérifier le service approprié
+            local db_service="mariadb"
+            if ! systemctl list-units --all | grep -q "mariadb.service"; then
+                if systemctl list-units --all | grep -q "mysql.service"; then
+                    db_service="mysql"
+                fi
+            fi
+            
+            service_enable "$db_service" || warn "Impossible d'activer le service $db_service"
+            service_restart "$db_service" || warn "Impossible de redémarrer le service $db_service"
+            sleep 2  # Attendre que le service démarre
+            check_service_status "$db_service" || warn "Service $db_service peut ne pas être active"
             ;;
 
         dnf)
-            pkg_install_with_rollback mariadb-server mariadb
+            pkg_install_with_rollback mariadb-server mariadb || \
+            error_exit "Impossible d'installer MariaDB"
             service_enable mariadb
             service_restart mariadb
             check_service_status mariadb
             ;;
 
         yum)
-            pkg_install_with_rollback mariadb-server mariadb
+            pkg_install_with_rollback mariadb-server mariadb || \
+            error_exit "Impossible d'installer MariaDB"
             service_enable mariadb
             service_restart mariadb
             check_service_status mariadb
             ;;
 
         zypper)
-            pkg_install_with_rollback mariadb mariadb-client
+            pkg_install_with_rollback mariadb mariadb-client || \
+            error_exit "Impossible d'installer MariaDB"
             service_enable mysql
             service_restart mysql
             check_service_status mysql
             ;;
 
         pacman)
-            pkg_install_with_rollback mariadb
+            pkg_install_with_rollback mariadb || \
+            error_exit "Impossible d'installer MariaDB"
             mariadb-install-db --user=mysql --basedir=/usr --datadir=/var/lib/mysql
             service_enable mariadb
             service_restart mariadb
