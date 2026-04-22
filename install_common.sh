@@ -774,65 +774,65 @@ configure_php() {
     local php_ini=""
     local fpm_ini=""
     
-    info "Configuration de PHP ${php_version}..."
+    info "Configuration de PHP..."
 
-    # Détecter les fichiers php.ini existants
+    # Détecter les fichiers php.ini existants - chercher la version réellement installée
     if [ -f "/etc/php/${php_version}/cli/php.ini" ]; then
         php_ini="/etc/php/${php_version}/cli/php.ini"
         fpm_ini="/etc/php/${php_version}/fpm/php.ini"
+        debug "Utilisation de PHP ${php_version}"
     elif [ -f "/etc/php/cli/php.ini" ]; then
-        # Fallback pour PHP générique
         php_ini="/etc/php/cli/php.ini"
         fpm_ini="/etc/php/fpm/php.ini"
+        debug "Utilisation de PHP générique"
     else
-        # Chercher n'importe quelle version de PHP
-        php_ini=$(find /etc/php -name "php.ini" -path "*/cli/*" 2>/dev/null | head -1)
+        # Chercher n'importe quelle version de PHP installée
+        php_ini=$(find /etc/php -name "php.ini" -path "*/cli/*" -print -quit 2>/dev/null || echo "")
         if [ -n "$php_ini" ]; then
-            fpm_ini=$(find /etc/php -name "php.ini" -path "*/fpm/*" 2>/dev/null | head -1)
+            fpm_ini=$(find /etc/php -name "php.ini" -path "*/fpm/*" -print -quit 2>/dev/null || echo "")
+            local detected_version=$(echo "$php_ini" | grep -oP '(?<=/php/)\d+\.\d+' 2>/dev/null || echo "unknown")
+            debug "Version PHP détectée: $detected_version"
         fi
     fi
 
     if [ -z "$php_ini" ]; then
-        warn "Fichiers php.ini non trouvés dans /etc/php, configuration PHP ignorée"
+        warn "Fichiers php.ini non trouvés, configuration PHP ignorée"
         return 0
     fi
 
     # Configuration PHP commune
     for ini_file in "$php_ini" "$fpm_ini"; do
-        if [ -f "$ini_file" ]; then
-            backup_file "$ini_file" 2>/dev/null || true
-            debug "Configuration de $ini_file"
-
-            # Augmenter les limites mémoire et temps d'exécution
-            sed -i 's/^memory_limit = .*/memory_limit = 256M/' "$ini_file" 2>/dev/null || true
-            sed -i 's/^max_execution_time = .*/max_execution_time = 600/' "$ini_file" 2>/dev/null || true
-            sed -i 's/^upload_max_filesize = .*/upload_max_filesize = 50M/' "$ini_file" 2>/dev/null || true
-            sed -i 's/^post_max_size = .*/post_max_size = 50M/' "$ini_file" 2>/dev/null || true
-            sed -i 's/^max_input_time = .*/max_input_time = 300/' "$ini_file" 2>/dev/null || true
-        else
-            debug "Fichier PHP non trouvé: $ini_file"
+        if [ -z "$ini_file" ] || [ ! -f "$ini_file" ]; then
+            continue
         fi
+        
+        backup_file "$ini_file" 2>/dev/null || true
+        debug "Configuration de $ini_file"
+
+        # Augmenter les limites mémoire et temps d'exécution
+        sed -i 's/^memory_limit = .*/memory_limit = 256M/' "$ini_file" 2>/dev/null || true
+        sed -i 's/^max_execution_time = .*/max_execution_time = 600/' "$ini_file" 2>/dev/null || true
+        sed -i 's/^upload_max_filesize = .*/upload_max_filesize = 50M/' "$ini_file" 2>/dev/null || true
+        sed -i 's/^post_max_size = .*/post_max_size = 50M/' "$ini_file" 2>/dev/null || true
+        sed -i 's/^max_input_time = .*/max_input_time = 300/' "$ini_file" 2>/dev/null || true
     done
 
-    # Redémarrer PHP-FPM si nécessaire
-    local fpm_service=""
-    if systemctl list-units --all 2>/dev/null | grep -q "php.*-fpm.service"; then
-        # Détecter le service PHP-FPM exact
-        fpm_service=$(systemctl list-units --all 2>/dev/null | grep "php.*-fpm.service" | awk '{print $1}' | head -1)
-    fi
-    
-    if [ -n "$fpm_service" ]; then
-        if systemctl restart "$fpm_service" 2>/dev/null; then
-            debug "Service PHP-FPM $fpm_service redémarré"
-        else
-            debug "Impossible de redémarrer le service PHP-FPM"
+    # Redémarrer PHP-FPM si le service existe
+    if command -v systemctl >/dev/null 2>&1; then
+        # Essayer de redémarrer le service PHP-FPM (chercher tout service php*-fpm)
+        if systemctl list-units --type service 2>/dev/null | grep -q "php.*fpm"; then
+            local fpm_services
+            fpm_services=$(systemctl list-units --type service 2>/dev/null | grep "php.*fpm" | awk '{print $1}' | sed 's/\.service$//' || echo "")
+            
+            if [ -n "$fpm_services" ]; then
+                for svc in $fpm_services; do
+                    if systemctl restart "$svc" 2>/dev/null; then
+                        debug "Service PHP-FPM $svc redémarré"
+                        break
+                    fi
+                done
+            fi
         fi
-    elif systemctl list-units --all 2>/dev/null | grep -q "php-fpm"; then
-        # Fallback générique
-        systemctl restart php-fpm 2>/dev/null || true
-        debug "Service php-fpm redémarré"
-    else
-        debug "Service PHP-FPM non trouvé"
     fi
 
     success "Configuration PHP terminée"
