@@ -819,4 +819,3 @@ configure_php() {
 
     success "Configuration PHP terminée"
 }
-}
