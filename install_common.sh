@@ -771,35 +771,68 @@ install_webserver() {
 # Configuration de base de PHP pour GLPI/Zabbix
 configure_php() {
     local php_version="${1:-8.2}"
-    local php_ini="/etc/php/${php_version}/cli/php.ini"
-    local fpm_ini="/etc/php/${php_version}/fpm/php.ini"
-
+    local php_ini=""
+    local fpm_ini=""
+    
     info "Configuration de PHP ${php_version}..."
+
+    # Détecter les fichiers php.ini existants
+    if [ -f "/etc/php/${php_version}/cli/php.ini" ]; then
+        php_ini="/etc/php/${php_version}/cli/php.ini"
+        fpm_ini="/etc/php/${php_version}/fpm/php.ini"
+    elif [ -f "/etc/php/cli/php.ini" ]; then
+        # Fallback pour PHP générique
+        php_ini="/etc/php/cli/php.ini"
+        fpm_ini="/etc/php/fpm/php.ini"
+    else
+        # Chercher n'importe quelle version de PHP
+        php_ini=$(find /etc/php -name "php.ini" -path "*/cli/*" 2>/dev/null | head -1)
+        if [ -n "$php_ini" ]; then
+            fpm_ini=$(find /etc/php -name "php.ini" -path "*/fpm/*" 2>/dev/null | head -1)
+        fi
+    fi
+
+    if [ -z "$php_ini" ]; then
+        warn "Fichiers php.ini non trouvés dans /etc/php, configuration PHP ignorée"
+        return 0
+    fi
 
     # Configuration PHP commune
     for ini_file in "$php_ini" "$fpm_ini"; do
         if [ -f "$ini_file" ]; then
-            backup_file "$ini_file"
+            backup_file "$ini_file" 2>/dev/null || true
             debug "Configuration de $ini_file"
 
             # Augmenter les limites mémoire et temps d'exécution
-            sed -i 's/memory_limit = .*/memory_limit = 256M/' "$ini_file" || warn "Impossible de modifier memory_limit dans $ini_file"
-            sed -i 's/max_execution_time = .*/max_execution_time = 600/' "$ini_file" || warn "Impossible de modifier max_execution_time dans $ini_file"
-            sed -i 's/upload_max_filesize = .*/upload_max_filesize = 50M/' "$ini_file" || warn "Impossible de modifier upload_max_filesize dans $ini_file"
-            sed -i 's/post_max_size = .*/post_max_size = 50M/' "$ini_file" || warn "Impossible de modifier post_max_size dans $ini_file"
-            sed -i 's/max_input_time = .*/max_input_time = 300/' "$ini_file" || warn "Impossible de modifier max_input_time dans $ini_file"
+            sed -i 's/^memory_limit = .*/memory_limit = 256M/' "$ini_file" 2>/dev/null || true
+            sed -i 's/^max_execution_time = .*/max_execution_time = 600/' "$ini_file" 2>/dev/null || true
+            sed -i 's/^upload_max_filesize = .*/upload_max_filesize = 50M/' "$ini_file" 2>/dev/null || true
+            sed -i 's/^post_max_size = .*/post_max_size = 50M/' "$ini_file" 2>/dev/null || true
+            sed -i 's/^max_input_time = .*/max_input_time = 300/' "$ini_file" 2>/dev/null || true
         else
             debug "Fichier PHP non trouvé: $ini_file"
         fi
     done
 
     # Redémarrer PHP-FPM si nécessaire
-    if command -v systemctl >/dev/null 2>&1; then
-        if systemctl restart php*-fpm 2>/dev/null; then
-            debug "PHP-FPM redémarré"
+    local fpm_service=""
+    if systemctl list-units --all 2>/dev/null | grep -q "php.*-fpm.service"; then
+        # Détecter le service PHP-FPM exact
+        fpm_service=$(systemctl list-units --all 2>/dev/null | grep "php.*-fpm.service" | awk '{print $1}' | head -1)
+    fi
+    
+    if [ -n "$fpm_service" ]; then
+        if systemctl restart "$fpm_service" 2>/dev/null; then
+            debug "Service PHP-FPM $fpm_service redémarré"
         else
-            warn "Impossible de redémarrer PHP-FPM"
+            debug "Impossible de redémarrer le service PHP-FPM"
         fi
+    elif systemctl list-units --all 2>/dev/null | grep -q "php-fpm"; then
+        # Fallback générique
+        systemctl restart php-fpm 2>/dev/null || true
+        debug "Service php-fpm redémarré"
+    else
+        debug "Service PHP-FPM non trouvé"
     fi
 
     success "Configuration PHP terminée"
