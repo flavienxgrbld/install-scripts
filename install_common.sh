@@ -776,25 +776,20 @@ configure_php() {
     
     info "Configuration de PHP..."
 
-    # Détecter les fichiers php.ini existants - chercher la version réellement installée
-    if [ -f "/etc/php/${php_version}/cli/php.ini" ]; then
+    # Chercher les fichiers php.ini - priorité: 8.4, puis 8.2, puis version demandée
+    if [ -f "/etc/php/8.4/cli/php.ini" ]; then
+        php_ini="/etc/php/8.4/cli/php.ini"
+        fpm_ini="/etc/php/8.4/fpm/php.ini"
+        debug "Utilisation de PHP 8.4"
+    elif [ -f "/etc/php/8.2/cli/php.ini" ]; then
+        php_ini="/etc/php/8.2/cli/php.ini"
+        fpm_ini="/etc/php/8.2/fpm/php.ini"
+        debug "Utilisation de PHP 8.2"
+    elif [ -f "/etc/php/${php_version}/cli/php.ini" ]; then
         php_ini="/etc/php/${php_version}/cli/php.ini"
         fpm_ini="/etc/php/${php_version}/fpm/php.ini"
         debug "Utilisation de PHP ${php_version}"
-    elif [ -f "/etc/php/cli/php.ini" ]; then
-        php_ini="/etc/php/cli/php.ini"
-        fpm_ini="/etc/php/fpm/php.ini"
-        debug "Utilisation de PHP générique"
     else
-        # Chercher n'importe quelle version de PHP installée
-        php_ini=$(find /etc/php -name "php.ini" -path "*/cli/*" -print -quit 2>/dev/null) || php_ini=""
-        if [ -n "$php_ini" ]; then
-            fpm_ini=$(find /etc/php -name "php.ini" -path "*/fpm/*" -print -quit 2>/dev/null) || fpm_ini=""
-            debug "Version PHP détectée: $php_ini"
-        fi
-    fi
-
-    if [ -z "$php_ini" ]; then
         warn "Fichiers php.ini non trouvés, configuration PHP ignorée"
         return 0
     fi
@@ -814,22 +809,12 @@ configure_php() {
     done
 
     # Redémarrer PHP-FPM si le service existe
-    if command -v systemctl >/dev/null 2>&1; then
-        debug "Tentative de redémarrage de PHP-FPM..."
-        # Chercher les services php*-fpm sans utiliser de pipe
-        local fpm_service
-        fpm_service=$(systemctl list-units --type service --all 2>/dev/null | grep "php.*fpm\.service" | head -1 | awk '{print $1}' | sed 's/\.service$//') || fpm_service=""
-        
-        if [ -n "$fpm_service" ]; then
-            debug "Service PHP-FPM trouvé: $fpm_service"
-            if systemctl restart "$fpm_service" 2>/dev/null; then
-                debug "Service PHP-FPM $fpm_service redémarré avec succès"
-            else
-                debug "Impossible de redémarrer le service PHP-FPM"
-            fi
-        else
-            debug "Aucun service PHP-FPM trouvé"
-        fi
+    if systemctl is-active --quiet php8.4-fpm 2>/dev/null; then
+        systemctl restart php8.4-fpm 2>/dev/null || true
+        debug "PHP 8.4 FPM redémarré"
+    elif systemctl is-active --quiet php8.2-fpm 2>/dev/null; then
+        systemctl restart php8.2-fpm 2>/dev/null || true
+        debug "PHP 8.2 FPM redémarré"
     fi
 
     success "Configuration PHP terminée"
