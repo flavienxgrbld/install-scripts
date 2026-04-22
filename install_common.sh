@@ -787,16 +787,16 @@ configure_php() {
         debug "Utilisation de PHP générique"
     else
         # Chercher n'importe quelle version de PHP installée
-        php_ini=$(find /etc/php -name "php.ini" -path "*/cli/*" -print -quit 2>/dev/null || echo "")
+        php_ini=$(find /etc/php -name "php.ini" -path "*/cli/*" -print -quit 2>/dev/null) || php_ini=""
         if [ -n "$php_ini" ]; then
-            fpm_ini=$(find /etc/php -name "php.ini" -path "*/fpm/*" -print -quit 2>/dev/null || echo "")
-            local detected_version=$(echo "$php_ini" | grep -oP '(?<=/php/)\d+\.\d+' 2>/dev/null || echo "unknown")
-            debug "Version PHP détectée: $detected_version"
+            fpm_ini=$(find /etc/php -name "php.ini" -path "*/fpm/*" -print -quit 2>/dev/null) || fpm_ini=""
+            debug "Version PHP détectée: $php_ini"
         fi
     fi
 
     if [ -z "$php_ini" ]; then
         warn "Fichiers php.ini non trouvés, configuration PHP ignorée"
+        success "Configuration PHP terminée (aucun fichier à configurer)"
         return 0
     fi
 
@@ -819,19 +819,20 @@ configure_php() {
 
     # Redémarrer PHP-FPM si le service existe
     if command -v systemctl >/dev/null 2>&1; then
-        # Essayer de redémarrer le service PHP-FPM (chercher tout service php*-fpm)
-        if systemctl list-units --type service 2>/dev/null | grep -q "php.*fpm"; then
-            local fpm_services
-            fpm_services=$(systemctl list-units --type service 2>/dev/null | grep "php.*fpm" | awk '{print $1}' | sed 's/\.service$//' || echo "")
-            
-            if [ -n "$fpm_services" ]; then
-                for svc in $fpm_services; do
-                    if systemctl restart "$svc" 2>/dev/null; then
-                        debug "Service PHP-FPM $svc redémarré"
-                        break
-                    fi
-                done
+        debug "Tentative de redémarrage de PHP-FPM..."
+        # Chercher les services php*-fpm sans utiliser de pipe
+        local fpm_service
+        fpm_service=$(systemctl list-units --type service --all 2>/dev/null | grep "php.*fpm\.service" | head -1 | awk '{print $1}' | sed 's/\.service$//') || fpm_service=""
+        
+        if [ -n "$fpm_service" ]; then
+            debug "Service PHP-FPM trouvé: $fpm_service"
+            if systemctl restart "$fpm_service" 2>/dev/null; then
+                debug "Service PHP-FPM $fpm_service redémarré avec succès"
+            else
+                debug "Impossible de redémarrer le service PHP-FPM"
             fi
+        else
+            debug "Aucun service PHP-FPM trouvé"
         fi
     fi
 
