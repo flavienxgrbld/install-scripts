@@ -1,9 +1,0 @@
-[2026-04-19 16:49:29] [INFO] Début de la mise à jour des scripts d'installation
-[2026-04-19 16:49:29] [INFO] Nombre de scripts à mettre à jour: 111
-[2026-04-19 16:49:29] [INFO] Mise à jour de R:\git\install-scripts\install_bookstack.sh
-[2026-04-19 16:49:29] [INFO] Script déjà mis à jour: R:\git\install-scripts\install_bookstack.sh
-[2026-04-19 16:49:29] [INFO] Mise à jour des appels de fonctions dans R:\git\install-scripts\install_bookstack.sh
-[2026-04-19 16:51:10] [SUCCESS] Appels de fonctions mis à jour dans R:\git\install-scripts\install_bookstack.sh
-[2026-04-19 16:51:10] [INFO] Mise à jour de R:\git\install-scripts\install_gitea.sh
-[2026-04-19 16:51:10] [INFO] Script déjà mis à jour: R:\git\install-scripts\install_gitea.sh
-[2026-04-19 16:51:10] [INFO] Mise à jour des appels de fonctions dans R:\git\install-scripts\install_gitea.sh
