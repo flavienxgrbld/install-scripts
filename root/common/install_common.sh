@@ -559,20 +559,26 @@ install_php() {
                         if curl -sSLo /tmp/debsuryorg-archive-keyring.deb https://packages.sury.org/debsuryorg-archive-keyring.deb 2>/dev/null; then
                             dpkg -i /tmp/debsuryorg-archive-keyring.deb 2>/dev/null || true
                             rm -f /tmp/debsuryorg-archive-keyring.deb
-                            
+
+                            # Ne poursuivre que si la clé a réellement été installée sur le disque
+                            if [ -f "$sury_keyring" ]; then
                             # Vérifier que le dépôt existe réellement pour ce codename
-                            if curl -sf "https://packages.sury.org/php/dists/${codename}/Release" > /dev/null 2>&1; then
-                                echo "deb [signed-by=${sury_keyring}] https://packages.sury.org/php/ ${codename} main" > /etc/apt/sources.list.d/sury-php.list
-                                info "Dépôt Sury ajouté pour ${codename}"
+                                if curl -sf "https://packages.sury.org/php/dists/${codename}/Release" > /dev/null 2>&1; then
+                                    echo "deb [signed-by=${sury_keyring}] https://packages.sury.org/php/ ${codename} main" > /etc/apt/sources.list.d/sury-php.list
+                                    info "Dépôt Sury ajouté pour ${codename}"
+                                else
+                                    info "Codename ${codename} non supporté par Sury, utilisation de bookworm"
+                                    echo "deb [signed-by=${sury_keyring}] https://packages.sury.org/php/ bookworm main" > /etc/apt/sources.list.d/sury-php.list
+                                fi
+                                pkg_update 2>/dev/null || true
                             else
-                                info "Codename ${codename} non supporté par Sury, utilisation de bookworm"
-                                echo "deb [signed-by=${sury_keyring}] https://packages.sury.org/php/ bookworm main" > /etc/apt/sources.list.d/sury-php.list
+                                warn "Clé Sury non installée correctement (fichier ${sury_keyring} absent), dépôt non ajouté"
+                                rm -f /etc/apt/sources.list.d/sury-php.list
                             fi
-                            pkg_update 2>/dev/null || true
-                        else
-                            warn "Impossible de télécharger la clé Sury"
-                        fi
-                    fi
+                    else
+                        warn "Impossible de télécharger la clé Sury"
+                        rm -f /etc/apt/sources.list.d/sury-php.list
+                    fi                    
                 fi
                 
                 # Essayer l'installation à nouveau après ajout du dépôt
