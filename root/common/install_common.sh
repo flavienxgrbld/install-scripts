@@ -578,7 +578,8 @@ install_php() {
                     else
                         warn "Impossible de télécharger la clé Sury"
                         rm -f /etc/apt/sources.list.d/sury-php.list
-                    fi                    
+                    fi
+                    
                 fi
                 
                 # Essayer l'installation à nouveau après ajout du dépôt
@@ -593,6 +594,7 @@ install_php() {
                     fi
                 fi
             fi
+            ;;
 
         dnf)
             # Pour RHEL/CentOS/Fedora, utiliser les dépôts Remi
