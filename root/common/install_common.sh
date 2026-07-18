@@ -594,7 +594,7 @@ install_php() {
                     fi
                 fi
             fi
-            ;;
+            ;
 
         dnf)
             # Pour RHEL/CentOS/Fedora, utiliser les dépôts Remi
