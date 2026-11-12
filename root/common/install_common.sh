@@ -165,7 +165,7 @@ pkg_install_with_rollback() {
     for pkg in "${packages[@]}"; do
         if pkg_install "$pkg" 2>/dev/null; then
             mark_package_installed "$pkg"
-            ((success_count++))
+            success_count=$((success_count + 1))
         else
             failed_packages+=("$pkg")
             debug "Impossible d'installer le package: $pkg (continuant...)"
@@ -361,7 +361,7 @@ detect_package_manager() {
 pkg_update() {
     case "$PKG_MANAGER" in
         apt)
-            apt update
+            apt-get update
             ;;
         dnf)
             dnf makecache --refresh
@@ -381,7 +381,7 @@ pkg_update() {
 pkg_upgrade() {
     case "$PKG_MANAGER" in
         apt)
-            apt upgrade -y
+            DEBIAN_FRONTEND=noninteractive apt-get upgrade -y
             ;;
         dnf)
             dnf upgrade -y
@@ -399,10 +399,10 @@ pkg_upgrade() {
 }
 
 pkg_install() {
-    debug "Installation des packages: $@"
+    debug "Installation des packages: $*"
     case "$PKG_MANAGER" in
         apt)
-            if ! apt install -y "$@" 2>&1; then
+            if ! DEBIAN_FRONTEND=noninteractive apt-get install -y "$@" 2>&1; then
                 return 1
             fi
             ;;
@@ -427,7 +427,7 @@ pkg_install() {
             fi
             ;;
     esac
-    debug "Packages installés avec succès: $@"
+    debug "Packages installés avec succès: $*"
     return 0
 }
 
@@ -534,67 +534,56 @@ install_php() {
 
     case "$PKG_MANAGER" in
         apt)
-            # Pour Debian/Ubuntu, installer les dépendances préalables
-            pkg_install lsb-release ca-certificates apt-transport-https software-properties-common gnupg2 curl wget || true
-
-            # Essayer d'abord les dépôts officiels pour les versions récentes de Debian
-            if pkg_install "php${php_version}" "php${php_version}-cli" "php${php_version}-common" "php${php_version}-mysql" "php${php_version}-zip" "php${php_version}-gd" "php${php_version}-mbstring" "php${php_version}-curl" "php${php_version}-xml" "php${php_version}-bcmath" "php${php_version}-json" "php${php_version}-intl" "php${php_version}-fpm" 2>/dev/null; then
-                success "PHP ${php_version} installé depuis les dépôts officiels"
-            else
-                info "PHP ${php_version} non trouvé dans les dépôts officiels, ajout du dépôt externe..."
-                
-                if is_ubuntu; then
-                    add-apt-repository -y ppa:ondrej/php 2>/dev/null || true
-                    pkg_update 2>/dev/null || true
-                else
-                    # Pour Debian, utiliser le dépôt Sury avec fallback
-                    local codename=$(lsb_release -sc 2>/dev/null || echo "bookworm")
-                    local sury_keyring="/usr/share/keyrings/deb.sury.org-php.gpg"
-                    
-                    info "Tentative d'ajout du dépôt Sury pour Debian..."
-                    if curl -sf https://packages.sury.org/php/apt.gpg > /dev/null 2>&1; then
-                        if [ -f /tmp/debsuryorg-archive-keyring.deb ]; then
-                            rm -f /tmp/debsuryorg-archive-keyring.deb
-                        fi
-                        if curl -sSLo /tmp/debsuryorg-archive-keyring.deb https://packages.sury.org/debsuryorg-archive-keyring.deb 2>/dev/null; then
-                            dpkg -i /tmp/debsuryorg-archive-keyring.deb 2>/dev/null || true
-                            rm -f /tmp/debsuryorg-archive-keyring.deb
-
-                            # Ne poursuivre que si la clé a réellement été installée sur le disque
-                            if [ -f "$sury_keyring" ]; then
-                            # Vérifier que le dépôt existe réellement pour ce codename
-                                if curl -sf "https://packages.sury.org/php/dists/${codename}/Release" > /dev/null 2>&1; then
-                                    echo "deb [signed-by=${sury_keyring}] https://packages.sury.org/php/ ${codename} main" > /etc/apt/sources.list.d/sury-php.list
-                                    info "Dépôt Sury ajouté pour ${codename}"
-                                else
-                                    info "Codename ${codename} non supporté par Sury, utilisation de bookworm"
-                                    echo "deb [signed-by=${sury_keyring}] https://packages.sury.org/php/ bookworm main" > /etc/apt/sources.list.d/sury-php.list
-                                fi
-                                pkg_update 2>/dev/null || true
-                            else
-                                warn "Clé Sury non installée correctement (fichier ${sury_keyring} absent), dépôt non ajouté"
-                                rm -f /etc/apt/sources.list.d/sury-php.list
-                            fi
-                    else
-                        warn "Impossible de télécharger la clé Sury"
-                        rm -f /etc/apt/sources.list.d/sury-php.list
-                    fi
-                    
-                fi
-                
-                # Essayer l'installation à nouveau après ajout du dépôt
-                if pkg_install "php${php_version}" "php${php_version}-cli" "php${php_version}-common" "php${php_version}-mysql" "php${php_version}-zip" "php${php_version}-gd" "php${php_version}-mbstring" "php${php_version}-curl" "php${php_version}-xml" "php${php_version}-bcmath" "php${php_version}-json" "php${php_version}-intl" "php${php_version}-fpm" 2>/dev/null; then
-                    success "PHP ${php_version} installé depuis le dépôt externe"
-                else
-                    info "PHP ${php_version} non disponible, installation de PHP générique..."
-                    if pkg_install "php" "php-cli" "php-common" "php-mysql" "php-zip" "php-gd" "php-mbstring" "php-curl" "php-xml" "php-bcmath" "php-json" "php-intl" "php-fpm" 2>/dev/null; then
-                        success "PHP générique installé"
-                    else
-                        error_exit "Impossible d'installer PHP"
-                    fi
-                fi
+            # Dépendances préalables, installées une par une : software-properties-common
+            # n'existe plus sur Debian 13 et ferait échouer toute la liste.
+            local dep
+            for dep in lsb-release ca-certificates apt-transport-https gnupg curl wget; do
+                pkg_install "$dep" >/dev/null 2>&1 || true
+            done
+            if is_ubuntu; then
+                pkg_install software-properties-common >/dev/null 2>&1 || true
             fi
-            ;
+
+            # Le module json est intégré à PHP 8 : il n'y a plus de paquet phpX-json.
+            local php_pkgs=("php${php_version}" "php${php_version}-cli" "php${php_version}-common" "php${php_version}-mysql" "php${php_version}-zip" "php${php_version}-gd" "php${php_version}-mbstring" "php${php_version}-curl" "php${php_version}-xml" "php${php_version}-bcmath" "php${php_version}-intl" "php${php_version}-fpm")
+
+            if pkg_install "${php_pkgs[@]}" 2>/dev/null; then
+                success "PHP ${php_version} installé depuis les dépôts officiels"
+                return 0
+            fi
+
+            info "PHP ${php_version} absent des dépôts officiels, ajout du dépôt externe..."
+            if is_ubuntu; then
+                add-apt-repository -y ppa:ondrej/php || warn "Impossible d'ajouter ppa:ondrej/php"
+            else
+                local codename
+                codename=$(lsb_release -sc 2>/dev/null || (. /etc/os-release && echo "${VERSION_CODENAME:-bookworm}"))
+                local sury_keyring="/usr/share/keyrings/deb.sury.org-php.gpg"
+                if curl -fsSLo /tmp/debsuryorg-archive-keyring.deb https://packages.sury.org/debsuryorg-archive-keyring.deb \
+                    && dpkg -i /tmp/debsuryorg-archive-keyring.deb && [ -f "$sury_keyring" ]; then
+                    if ! curl -fsS "https://packages.sury.org/php/dists/${codename}/Release" >/dev/null 2>&1; then
+                        warn "Version ${codename} non gérée par le dépôt Sury, utilisation de bookworm"
+                        codename="bookworm"
+                    fi
+                    echo "deb [signed-by=${sury_keyring}] https://packages.sury.org/php/ ${codename} main" > /etc/apt/sources.list.d/sury-php.list
+                    info "Dépôt Sury ajouté pour ${codename}"
+                else
+                    warn "Impossible d'installer la clé du dépôt Sury"
+                    rm -f /etc/apt/sources.list.d/sury-php.list
+                fi
+                rm -f /tmp/debsuryorg-archive-keyring.deb
+            fi
+            pkg_update || true
+
+            if pkg_install "${php_pkgs[@]}" 2>/dev/null; then
+                success "PHP ${php_version} installé depuis le dépôt externe"
+            else
+                info "PHP ${php_version} indisponible, installation de la version PHP de la distribution..."
+                pkg_install php php-cli php-common php-mysql php-zip php-gd php-mbstring php-curl php-xml php-bcmath php-intl php-fpm \
+                    || error_exit "Impossible d'installer PHP"
+                success "PHP de la distribution installé"
+            fi
+            ;;
 
         dnf)
             # Pour RHEL/CentOS/Fedora, utiliser les dépôts Remi
@@ -607,7 +596,7 @@ install_php() {
                 dnf module enable php:remi-${php_version} -y
             fi
 
-            pkg_install "php" "php-cli" "php-common" "php-mysqlnd" "php-zip" "php-gd" "php-mbstring" "php-curl" "php-xml" "php-bcmath" "php-json" "php-intl" "php-fpm"
+            pkg_install "php" "php-cli" "php-common" "php-mysqlnd" "php-zip" "php-gd" "php-mbstring" "php-curl" "php-xml" "php-bcmath" "php-intl" "php-fpm"
             ;;
 
         yum)
@@ -617,7 +606,7 @@ install_php() {
 
             yum-config-manager --enable remi remi-php${php_version//./} || true
 
-            pkg_install "php" "php-cli" "php-common" "php-mysql" "php-zip" "php-gd" "php-mbstring" "php-curl" "php-xml" "php-bcmath" "php-json" "php-intl" "php-fpm"
+            pkg_install "php" "php-cli" "php-common" "php-mysql" "php-zip" "php-gd" "php-mbstring" "php-curl" "php-xml" "php-bcmath" "php-intl" "php-fpm"
             ;;
 
         zypper)
